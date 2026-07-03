@@ -34,7 +34,11 @@ import { TimelineTab } from "./components/TimelineTab";
 import { FunnelTab } from "./components/FunnelTab";
 import { HtmlViewerTab } from "./components/HtmlViewerTab";
 import { LowRatedDailyChart } from "./components/LowRatedDailyChart";
-import { loadReleaseMarkers } from "./releaseMarkers";
+import {
+  loadHiddenBuiltinReleaseIds,
+  loadManualReleaseMarkers,
+  resolveReleaseMarkers,
+} from "./releaseMarkers";
 import {
   loadChangePointBatchId,
   resolveChangePointBatchId,
@@ -249,7 +253,15 @@ export default function App() {
     [workingBatches]
   );
 
-  const releaseMarkers = useMemo(() => loadReleaseMarkers(), []);
+  const releaseMarkers = useMemo(
+    () =>
+      resolveReleaseMarkers(
+        sortedWorkingBatches,
+        loadManualReleaseMarkers(),
+        loadHiddenBuiltinReleaseIds()
+      ),
+    [sortedWorkingBatches]
+  );
 
   useEffect(() => {
     const ids = sortedWorkingBatches.map((b) => b.id);

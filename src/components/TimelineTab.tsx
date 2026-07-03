@@ -15,16 +15,20 @@ import { Line, Bar } from "react-chartjs-2";
 import {
   computeTimelineReleaseOverlays,
   computeTagTimeline,
-  computeTagTrends,
   topTagsAcrossBatches,
 } from "../analytics";
 import { CHART, timelineChartOptions } from "../chartTheme";
 import { LABELS } from "../labels";
 import type { LoadedBatch, TagKind } from "../parsing";
 import {
+  BUILTIN_RELEASE_DEFINITIONS,
+  builtinReleaseIdFromMarkerId,
   createReleaseMarker,
-  loadReleaseMarkers,
-  saveReleaseMarkers,
+  loadHiddenBuiltinReleaseIds,
+  loadManualReleaseMarkers,
+  resolveReleaseMarkers,
+  saveHiddenBuiltinReleaseIds,
+  saveManualReleaseMarkers,
   type ReleaseMarker,
 } from "../releaseMarkers";
 import { createReleaseMarkerPlugin } from "../releaseMarkerPlugin";
@@ -41,9 +45,17 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarEleme
 
 type ChartView = "line" | "bar";
 
-type OverlaySelection = { tag: string; kind: TagKind } | null;
+type CompareTag = { tag: string; kind: TagKind };
 
-const OVERLAY_LINE_COLOR = "#059669";
+const OVERLAY_COLORS = CHART.colors.filter((c) => c !== CHART.accent && c !== "#7c3aed");
+
+function compareKey(tag: string, kind: TagKind): string {
+  return `${kind}:${tag}`;
+}
+
+function compareColor(index: number): string {
+  return OVERLAY_COLORS[index % OVERLAY_COLORS.length];
+}
 
 function colorForTagKind(kind: TagKind): string {
   return kind === "discovery" ? "#7c3aed" : CHART.accent;
@@ -76,7 +88,12 @@ export function TimelineTab({
   const [tagSearch, setTagSearch] = useState("");
   const [tagPickerOpen, setTagPickerOpen] = useState(false);
   const [chartView, setChartView] = useState<ChartView>("line");
-  const [releaseMarkers, setReleaseMarkers] = useState<ReleaseMarker[]>(() => loadReleaseMarkers());
+  const [manualReleaseMarkers, setManualReleaseMarkers] = useState<ReleaseMarker[]>(() =>
+    loadManualReleaseMarkers()
+  );
+  const [hiddenBuiltinIds, setHiddenBuiltinIds] = useState<string[]>(() =>
+    loadHiddenBuiltinReleaseIds()
+  );
   const [newReleaseLabel, setNewReleaseLabel] = useState("");
   const [newReleaseBatchId, setNewReleaseBatchId] = useState("");
   const [showConfig, setShowConfig] = useState(false);
@@ -84,16 +101,20 @@ export function TimelineTab({
     loadChangePointBatchId()
   );
   const [selectedReleaseId, setSelectedReleaseId] = useState<string | null>(null);
-  const [overlay, setOverlay] = useState<OverlaySelection>(null);
-  const [overlayPickerOpen, setOverlayPickerOpen] = useState(false);
-  const [overlaySearch, setOverlaySearch] = useState("");
-  const [overlayKind, setOverlayKind] = useState<"qa" | "discovery">("discovery");
+  const [compareTags, setCompareTags] = useState<CompareTag[]>([]);
+  const [comparePickerOpen, setComparePickerOpen] = useState(false);
+  const [compareSearch, setCompareSearch] = useState("");
+  const [compareKind, setCompareKind] = useState<"qa" | "discovery">("discovery");
   const pickerRef = useRef<HTMLDivElement>(null);
-  const overlayPickerRef = useRef<HTMLDivElement>(null);
+  const comparePickerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    saveReleaseMarkers(releaseMarkers);
-  }, [releaseMarkers]);
+    saveManualReleaseMarkers(manualReleaseMarkers);
+  }, [manualReleaseMarkers]);
+
+  useEffect(() => {
+    saveHiddenBuiltinReleaseIds(hiddenBuiltinIds);
+  }, [hiddenBuiltinIds]);
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -101,8 +122,8 @@ export function TimelineTab({
       if (pickerRef.current && !pickerRef.current.contains(t)) {
         setTagPickerOpen(false);
       }
-      if (overlayPickerRef.current && !overlayPickerRef.current.contains(t)) {
-        setOverlayPickerOpen(false);
+      if (comparePickerRef.current && !comparePickerRef.current.contains(t)) {
+        setComparePickerOpen(false);
       }
     };
     document.addEventListener("mousedown", onClick);
@@ -125,30 +146,25 @@ export function TimelineTab({
     return list.slice(0, 40);
   }, [tagStats, tagSearch]);
 
-  const overlayTagStats = useMemo(
+  const compareTagStats = useMemo(
     () =>
       topTagsAcrossBatches(
         batches,
-        overlayKind === "qa" ? (r) => r.qaTags : (r) => r.discoveryTags,
+        compareKind === "qa" ? (r) => r.qaTags : (r) => r.discoveryTags,
         lowScoreOnly
       ),
-    [batches, overlayKind, lowScoreOnly]
+    [batches, compareKind, lowScoreOnly]
   );
 
-  const filteredOverlayTags = useMemo(() => {
-    const q = overlaySearch.trim().toLowerCase();
+  const filteredCompareOptions = useMemo(() => {
+    const q = compareSearch.trim().toLowerCase();
     const list = q
-      ? overlayTagStats.filter((r) => r.tag.toLowerCase().includes(q))
-      : overlayTagStats;
+      ? compareTagStats.filter((r) => r.tag.toLowerCase().includes(q))
+      : compareTagStats;
     return list
-      .filter((r) => !(r.tag === selectedTag && overlayKind === tagKind))
+      .filter((r) => !(r.tag === selectedTag && compareKind === tagKind))
       .slice(0, 40);
-  }, [overlayTagStats, overlaySearch, selectedTag, overlayKind, tagKind]);
-
-  const trends = useMemo(
-    () => computeTagTrends(batches, tagStats, tagKind, lowScoreOnly),
-    [batches, tagStats, tagKind, lowScoreOnly]
-  );
+  }, [compareTagStats, compareSearch, selectedTag, compareKind, tagKind]);
 
   const sortedBatches = useMemo(
     () =>
@@ -156,6 +172,11 @@ export function TimelineTab({
         (a, b) => (a.periodDate?.getTime() ?? 0) - (b.periodDate?.getTime() ?? 0)
       ),
     [batches]
+  );
+
+  const releaseMarkers = useMemo(
+    () => resolveReleaseMarkers(sortedBatches, manualReleaseMarkers, hiddenBuiltinIds),
+    [sortedBatches, manualReleaseMarkers, hiddenBuiltinIds]
   );
 
   useEffect(() => {
@@ -188,27 +209,44 @@ export function TimelineTab({
     }
   }, [initialTag]);
 
+  useEffect(() => {
+    if (!selectedTag) return;
+    setCompareTags((prev) =>
+      prev.filter((c) => !(c.tag === selectedTag && c.kind === tagKind))
+    );
+  }, [selectedTag, tagKind]);
+
   const timeline = useMemo(() => {
     if (!selectedTag) return [];
     return computeTagTimeline(sortedBatches, selectedTag, tagKind, lowScoreOnly);
   }, [sortedBatches, selectedTag, tagKind, lowScoreOnly]);
 
-  const overlayTimeline = useMemo(() => {
-    if (!overlay) return [];
-    return computeTagTimeline(sortedBatches, overlay.tag, overlay.kind, lowScoreOnly);
-  }, [sortedBatches, overlay, lowScoreOnly]);
+  const compareSeries = useMemo(() => {
+    return compareTags.map((compare, index) => {
+      const seriesTimeline = computeTagTimeline(
+        sortedBatches,
+        compare.tag,
+        compare.kind,
+        lowScoreOnly
+      );
+      const byBatchId = new Map(seriesTimeline.map((p) => [p.batchId, p]));
+      return {
+        ...compare,
+        color: compareColor(index),
+        byBatchId,
+        data: timeline.map((p) => byBatchId.get(p.batchId)?.pct ?? null),
+      };
+    });
+  }, [compareTags, sortedBatches, lowScoreOnly, timeline]);
 
-  const overlayByBatchId = useMemo(
-    () => new Map(overlayTimeline.map((p) => [p.batchId, p])),
-    [overlayTimeline]
-  );
+  const seriesKindByLabel = useMemo(() => {
+    const map = new Map<string, TagKind>();
+    if (selectedTag) map.set(selectedTag, tagKind);
+    for (const compare of compareTags) map.set(compare.tag, compare.kind);
+    return map;
+  }, [selectedTag, tagKind, compareTags]);
 
   const poolLabel = lowScoreOnly ? "score ≤ 5" : "all sessions";
-
-  const selectedTrend = useMemo(
-    () => trends.find((t) => t.tag === selectedTag) ?? null,
-    [trends, selectedTag]
-  );
 
   const timelineAvg = useMemo(() => {
     if (!timeline.length) return null;
@@ -258,25 +296,44 @@ export function TimelineTab({
     const label = newReleaseLabel.trim();
     const batchId = newReleaseBatchId;
     if (!label || !batchId) return;
-    setReleaseMarkers((prev) => [...prev, createReleaseMarker(label, batchId)]);
+    setManualReleaseMarkers((prev) => [...prev, createReleaseMarker(label, batchId)]);
     setNewReleaseLabel("");
     setShowConfig(true);
   };
 
-  const removeReleaseMarker = (id: string) => {
-    setReleaseMarkers((prev) => prev.filter((m) => m.id !== id));
+  const removeReleaseMarker = (marker: ReleaseMarker) => {
+    if (marker.source === "builtin") {
+      const builtinId = builtinReleaseIdFromMarkerId(marker.id);
+      if (builtinId) {
+        setHiddenBuiltinIds((prev) => (prev.includes(builtinId) ? prev : [...prev, builtinId]));
+      }
+      return;
+    }
+    setManualReleaseMarkers((prev) => prev.filter((m) => m.id !== marker.id));
+  };
+
+  const restoreBuiltinRelease = (builtinId: string) => {
+    setHiddenBuiltinIds((prev) => prev.filter((id) => id !== builtinId));
+  };
+
+  const toggleCompareTag = (tag: string, kind: TagKind) => {
+    const key = compareKey(tag, kind);
+    setCompareTags((prev) => {
+      const exists = prev.some((c) => compareKey(c.tag, c.kind) === key);
+      if (exists) return prev.filter((c) => compareKey(c.tag, c.kind) !== key);
+      return [...prev, { tag, kind }];
+    });
+  };
+
+  const removeCompareTag = (tag: string, kind: TagKind) => {
+    const key = compareKey(tag, kind);
+    setCompareTags((prev) => prev.filter((c) => compareKey(c.tag, c.kind) !== key));
   };
 
   const accent = colorForTagKind(tagKind);
-  const overlayAccent = overlay ? colorForTagKind(overlay.kind) : OVERLAY_LINE_COLOR;
-  const hasOverlay = overlay != null;
+  const hasCompare = compareTags.length > 0;
 
   const chartLabels = useMemo(() => timeline.map((p) => p.label), [timeline]);
-
-  const overlaySeriesData = useMemo(() => {
-    if (!overlay) return null;
-    return timeline.map((p) => overlayByBatchId.get(p.batchId)?.pct ?? null);
-  }, [timeline, overlay, overlayByBatchId]);
 
   const barChartData = useMemo(() => {
     const datasets: import("chart.js").ChartDataset<"bar", number[]>[] = [
@@ -287,16 +344,16 @@ export function TimelineTab({
         borderColor: accent,
         borderWidth: 0,
         borderRadius: 4,
-        barPercentage: hasOverlay ? 0.55 : 0.65,
-        categoryPercentage: hasOverlay ? 0.72 : 0.8,
+        barPercentage: hasCompare ? 0.55 : 0.65,
+        categoryPercentage: hasCompare ? 0.72 : 0.8,
       },
     ];
-    if (overlay && overlaySeriesData) {
+    for (const compare of compareSeries) {
       datasets.push({
-        label: overlay.tag,
-        data: overlaySeriesData.map((v) => v ?? 0),
-        backgroundColor: `${overlayAccent}88`,
-        borderColor: overlayAccent,
+        label: compare.tag,
+        data: compare.data.map((v) => v ?? 0),
+        backgroundColor: `${compare.color}88`,
+        borderColor: compare.color,
         borderWidth: 0,
         borderRadius: 4,
         barPercentage: 0.55,
@@ -304,16 +361,7 @@ export function TimelineTab({
       });
     }
     return { labels: chartLabels, datasets };
-  }, [
-    chartLabels,
-    timeline,
-    selectedTag,
-    accent,
-    overlay,
-    overlaySeriesData,
-    overlayAccent,
-    hasOverlay,
-  ]);
+  }, [chartLabels, timeline, selectedTag, accent, compareSeries, hasCompare]);
 
   const lineChartData = useMemo(() => {
     const datasets: import("chart.js").ChartDataset<"line", number[]>[] = [
@@ -332,33 +380,25 @@ export function TimelineTab({
         borderWidth: 2,
       },
     ];
-    if (overlay && overlaySeriesData) {
+    for (const compare of compareSeries) {
       datasets.push({
-        label: overlay.tag,
-        data: overlaySeriesData.map((v) => v ?? 0),
-        borderColor: overlayAccent,
-        backgroundColor: `${overlayAccent}08`,
+        label: compare.tag,
+        data: compare.data.map((v) => v ?? 0),
+        borderColor: compare.color,
+        backgroundColor: `${compare.color}08`,
         fill: false,
         tension: 0.35,
         pointRadius: timeline.length > 14 ? 0 : 3,
         pointHoverRadius: 5,
         pointBackgroundColor: "#fff",
-        pointBorderColor: overlayAccent,
+        pointBorderColor: compare.color,
         pointBorderWidth: 2,
         borderWidth: 2,
         borderDash: [6, 4],
       });
     }
     return { labels: chartLabels, datasets };
-  }, [
-    chartLabels,
-    timeline,
-    selectedTag,
-    accent,
-    overlay,
-    overlaySeriesData,
-    overlayAccent,
-  ]);
+  }, [chartLabels, timeline, selectedTag, accent, compareSeries]);
 
   const makeTooltipLine = (
     dataIndex: number,
@@ -370,7 +410,9 @@ export function TimelineTab({
     const point =
       seriesTag === selectedTag
         ? timeline[dataIndex]
-        : overlayByBatchId.get(timeline[dataIndex]?.batchId ?? "");
+        : compareSeries.find((c) => c.tag === seriesTag)?.byBatchId.get(
+            timeline[dataIndex]?.batchId ?? ""
+          );
     if (!point) return `${seriesTag}: ${Number(y).toFixed(1)}%`;
     return `${seriesTag} (${kindShortLabel(seriesKind)}): ${Number(y).toFixed(1)}% · ${point.count}/${point.poolSize}`;
   };
@@ -395,13 +437,13 @@ export function TimelineTab({
       plugins: {
         ...baseChartOptions.plugins,
         legend: {
-          display: hasOverlay,
+          display: hasCompare,
           position: "top" as const,
           labels: { color: CHART.text, font: { size: 12 }, boxWidth: 14, padding: 14 },
         },
         tooltip: {
           ...baseChartOptions.plugins.tooltip,
-          displayColors: hasOverlay,
+          displayColors: hasCompare,
           callbacks: {
             title: (items: TooltipItem<"bar">[]) => {
               const idx = items[0]?.dataIndex;
@@ -409,15 +451,14 @@ export function TimelineTab({
             },
             label: (ctx: TooltipItem<"bar">) => {
               const label = String(ctx.dataset.label ?? "");
-              const kind =
-                label === selectedTag ? tagKind : overlay?.kind ?? tagKind;
+              const kind = seriesKindByLabel.get(label) ?? tagKind;
               return makeTooltipLine(ctx.dataIndex, ctx.parsed.y, label, kind);
             },
           },
         },
       },
     }),
-    [baseChartOptions, chartPadding, timeline, hasOverlay, selectedTag, tagKind, overlay, overlayByBatchId]
+    [baseChartOptions, chartPadding, timeline, hasCompare, tagKind, seriesKindByLabel, compareSeries, selectedTag]
   );
 
   const lineChartOptions = useMemo(
@@ -427,13 +468,13 @@ export function TimelineTab({
       plugins: {
         ...baseChartOptions.plugins,
         legend: {
-          display: hasOverlay,
+          display: hasCompare,
           position: "top" as const,
           labels: { color: CHART.text, font: { size: 12 }, boxWidth: 14, padding: 14 },
         },
         tooltip: {
           ...baseChartOptions.plugins.tooltip,
-          displayColors: hasOverlay,
+          displayColors: hasCompare,
           callbacks: {
             title: (items: TooltipItem<"line">[]) => {
               const idx = items[0]?.dataIndex;
@@ -441,15 +482,14 @@ export function TimelineTab({
             },
             label: (ctx: TooltipItem<"line">) => {
               const label = String(ctx.dataset.label ?? "");
-              const kind =
-                label === selectedTag ? tagKind : overlay?.kind ?? tagKind;
+              const kind = seriesKindByLabel.get(label) ?? tagKind;
               return makeTooltipLine(ctx.dataIndex, ctx.parsed.y, label, kind);
             },
           },
         },
       },
     }),
-    [baseChartOptions, chartPadding, timeline, hasOverlay, selectedTag, tagKind, overlay, overlayByBatchId]
+    [baseChartOptions, chartPadding, timeline, hasCompare, tagKind, seriesKindByLabel, compareSeries, selectedTag]
   );
 
   if (batches.length === 0) {
@@ -537,90 +577,101 @@ export function TimelineTab({
             ) : null}
           </div>
 
-          <div className="tl-overlay-row">
-            <span className="tl-overlay-label">Overlay</span>
-            <div className="tl-kind-pills tl-kind-pills-compact">
+          <div className="tl-compare-row">
+            {compareTags.map((compare, index) => (
+              <span
+                key={compareKey(compare.tag, compare.kind)}
+                className="tl-compare-chip"
+                style={{ borderColor: compareColor(index) }}
+              >
+                <span
+                  className="tl-compare-dot"
+                  style={{ background: compareColor(index) }}
+                  aria-hidden
+                />
+                {compare.tag}
+                <button
+                  type="button"
+                  className="tl-compare-chip-remove"
+                  aria-label={`Remove ${compare.tag}`}
+                  onClick={() => removeCompareTag(compare.tag, compare.kind)}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            <div className="tl-tag-combo tl-compare-add" ref={comparePickerRef}>
               <button
                 type="button"
-                className={overlayKind === "qa" ? "active" : ""}
-                onClick={() => setOverlayKind("qa")}
+                className={`tl-tag-trigger tl-compare-trigger ${compareTags.length ? "has-compare" : ""}`}
+                onClick={() => setComparePickerOpen((o) => !o)}
+                aria-expanded={comparePickerOpen}
               >
-                {LABELS.tags}
-              </button>
-              <button
-                type="button"
-                className={overlayKind === "discovery" ? "active" : ""}
-                onClick={() => setOverlayKind("discovery")}
-              >
-                {LABELS.categories}
-              </button>
-            </div>
-            <div className="tl-tag-combo tl-overlay-combo" ref={overlayPickerRef}>
-              <button
-                type="button"
-                className={`tl-tag-trigger ${overlay ? "has-overlay" : ""}`}
-                onClick={() => setOverlayPickerOpen((o) => !o)}
-                aria-expanded={overlayPickerOpen}
-              >
-                <span className="tl-tag-trigger-label">
-                  {overlay ? overlay.tag : "Add comparison…"}
-                </span>
+                <span className="tl-tag-trigger-label">+ Compare</span>
                 <span className="tl-tag-trigger-caret">▾</span>
               </button>
-              {overlayPickerOpen ? (
+              {comparePickerOpen ? (
                 <div className="tl-tag-dropdown">
+                  <div className="tl-compare-dropdown-head">
+                    <div className="tl-kind-pills tl-kind-pills-compact">
+                      <button
+                        type="button"
+                        className={compareKind === "qa" ? "active" : ""}
+                        onClick={() => setCompareKind("qa")}
+                      >
+                        {LABELS.tags}
+                      </button>
+                      <button
+                        type="button"
+                        className={compareKind === "discovery" ? "active" : ""}
+                        onClick={() => setCompareKind("discovery")}
+                      >
+                        {LABELS.categories}
+                      </button>
+                    </div>
+                  </div>
                   <input
                     type="search"
                     className="tl-tag-search"
-                    placeholder="Search overlay…"
-                    value={overlaySearch}
-                    onChange={(e) => setOverlaySearch(e.target.value)}
+                    placeholder="Search…"
+                    value={compareSearch}
+                    onChange={(e) => setCompareSearch(e.target.value)}
                     autoFocus
                   />
                   <ul className="tl-tag-options">
-                    {filteredOverlayTags.length === 0 ? (
+                    {filteredCompareOptions.length === 0 ? (
                       <li className="tl-tag-empty">No matches</li>
                     ) : (
-                      filteredOverlayTags.map((row) => (
-                        <li key={row.tag}>
-                          <button
-                            type="button"
-                            className={
-                              overlay?.tag === row.tag && overlay?.kind === overlayKind
-                                ? "selected"
-                                : ""
-                            }
-                            title={getTagDescriptionOrDefault(row.tag, overlayKind)}
-                            onClick={() => {
-                              setOverlay({ tag: row.tag, kind: overlayKind });
-                              setOverlayPickerOpen(false);
-                              setOverlaySearch("");
-                            }}
-                          >
-                            <span className="tl-tag-option-main">
-                              <span>{row.tag}</span>
-                              <span className="tl-tag-pct">{row.pctOfPool.toFixed(1)}%</span>
-                            </span>
-                            <span className="tl-tag-desc">
-                              {getTagDescriptionOrDefault(row.tag, overlayKind)}
-                            </span>
-                          </button>
-                        </li>
-                      ))
+                      filteredCompareOptions.map((row) => {
+                        const selected = compareTags.some(
+                          (c) => c.tag === row.tag && c.kind === compareKind
+                        );
+                        return (
+                          <li key={row.tag}>
+                            <button
+                              type="button"
+                              className={selected ? "selected" : ""}
+                              title={getTagDescriptionOrDefault(row.tag, compareKind)}
+                              onClick={() => toggleCompareTag(row.tag, compareKind)}
+                            >
+                              <span className="tl-tag-option-main">
+                                <span>{row.tag}</span>
+                                <span className="tl-tag-pct">
+                                  {selected ? "✓" : `${row.pctOfPool.toFixed(1)}%`}
+                                </span>
+                              </span>
+                              <span className="tl-tag-desc">
+                                {getTagDescriptionOrDefault(row.tag, compareKind)}
+                              </span>
+                            </button>
+                          </li>
+                        );
+                      })
                     )}
                   </ul>
                 </div>
               ) : null}
             </div>
-            {overlay ? (
-              <button
-                type="button"
-                className="tl-overlay-clear"
-                onClick={() => setOverlay(null)}
-              >
-                Clear overlay
-              </button>
-            ) : null}
           </div>
         </div>
 
@@ -671,18 +722,6 @@ export function TimelineTab({
                   {timeline.length > 0 ? ` · ${timeline.length}d` : ""} · {poolLabel}
                 </span>
               </div>
-
-              {selectedTrend && batches.length >= 2 ? (
-                <div className={`tl-metric tl-metric-delta ${selectedTrend.direction}`}>
-                  <span className="tl-metric-value">
-                    {selectedTrend.deltaPct != null
-                      ? `${selectedTrend.deltaPct >= 0 ? "+" : ""}${selectedTrend.deltaPct.toFixed(1)}`
-                      : "—"}
-                    <span className="tl-metric-unit">pp</span>
-                  </span>
-                  <span className="tl-metric-label">vs previous day</span>
-                </div>
-              ) : null}
             </div>
 
             {releaseOverlays.length > 0 ? (
@@ -715,19 +754,18 @@ export function TimelineTab({
             <div className="tl-pool-chart-head">
               <h3 className="tl-pool-chart-title">
                 {selectedTag}
-                {overlay ? (
+                {compareTags.length > 0 ? (
                   <>
                     {" "}
-                    <span className="tl-chart-vs">vs</span> {overlay.tag}
+                    <span className="tl-chart-vs">vs</span>{" "}
+                    {compareTags.map((c) => c.tag).join(", ")}
                   </>
                 ) : null}{" "}
                 over time
               </h3>
               <p className="tl-pool-chart-sub">
                 % of conversations tagged each day
-                {overlay
-                  ? ` · solid/filled = ${selectedTag}, dashed = ${overlay.tag}`
-                  : ""}
+                {compareTags.length > 0 ? " · dashed lines = comparisons" : ""}
               </p>
             </div>
             {timeline.length <= 1 ? (
@@ -776,8 +814,8 @@ export function TimelineTab({
           <div className="tl-config-panel flat">
             <section className="tl-config-section">
               <p className="tl-muted" style={{ margin: "0 0 0.75rem", fontSize: "0.82rem" }}>
-                Mark the first day after a release. Click a release pill above the chart to filter
-                significant changes.
+                Built-in releases are matched automatically from uploaded day labels. Add custom
+                markers below, or hide a built-in you do not need.
               </p>
               <div className="tl-config-row">
                 <input
@@ -816,10 +854,31 @@ export function TimelineTab({
                       <li key={m.id}>
                         <span>
                           <strong>{m.label}</strong>
+                          {m.source === "builtin" ? (
+                            <span className="tl-muted"> · built-in</span>
+                          ) : null}
                           <span className="tl-muted"> · {batch?.label ?? "—"}</span>
                         </span>
-                        <button type="button" onClick={() => removeReleaseMarker(m.id)}>
-                          Remove
+                        <button type="button" onClick={() => removeReleaseMarker(m)}>
+                          {m.source === "builtin" ? "Hide" : "Remove"}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
+              {hiddenBuiltinIds.length > 0 ? (
+                <ul className="tl-release-list" style={{ marginTop: "0.75rem" }}>
+                  {hiddenBuiltinIds.map((builtinId) => {
+                    const def = BUILTIN_RELEASE_DEFINITIONS.find((d) => d.id === builtinId);
+                    if (!def) return null;
+                    return (
+                      <li key={builtinId}>
+                        <span className="tl-muted">
+                          <strong>{def.label}</strong> · hidden
+                        </span>
+                        <button type="button" onClick={() => restoreBuiltinRelease(builtinId)}>
+                          Restore
                         </button>
                       </li>
                     );
