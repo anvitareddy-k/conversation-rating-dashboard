@@ -1,9 +1,11 @@
 import type { Chart, Plugin } from "chart.js";
 import type { TimelineReleaseOverlay } from "./analytics";
 
-const MARKER_COLOR = "#94a3b8";
-const MARKER_LABEL_BG = "#f8fafc";
-const MARKER_LABEL_TEXT = "#475569";
+const MARKER_COLOR = "#2563eb";
+const MARKER_FILL = "rgba(37, 99, 235, 0.1)";
+const MARKER_LABEL_BG = "#eff6ff";
+const MARKER_LABEL_BORDER = "#93c5fd";
+const MARKER_LABEL_TEXT = "#1d4ed8";
 
 function pointX(chart: Chart<"line" | "bar">, index: number): number | null {
   const meta = chart.getDatasetMeta(0);
@@ -41,34 +43,34 @@ export function createReleaseMarkerPlugin(
 
         ctx.save();
 
-        // Subtle shaded "after release" region
-        ctx.fillStyle = "rgba(37, 99, 235, 0.04)";
+        // Shaded "after release" region
+        ctx.fillStyle = MARKER_FILL;
         ctx.fillRect(x, chartArea.top, chartArea.right - x, chartArea.bottom - chartArea.top);
 
         // Vertical release line
         ctx.strokeStyle = MARKER_COLOR;
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([4, 4]);
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 4]);
         ctx.beginPath();
         ctx.moveTo(x, chartArea.top);
         ctx.lineTo(x, chartArea.bottom);
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // Minimal label
+        // Label chip on chart
         const label = overlay.markerLabel || "Release";
-        ctx.font = "500 10px system-ui, sans-serif";
+        ctx.font = "600 11px system-ui, sans-serif";
         const textW = ctx.measureText(label).width;
-        const padX = 5;
+        const padX = 6;
         const boxW = textW + padX * 2;
-        const boxH = 16;
-        let boxX = x + 6;
+        const boxH = 20;
+        let boxX = x + 8;
         boxX = Math.min(boxX, chartArea.right - boxW - 4);
-        const boxY = chartArea.top + 6;
+        const boxY = chartArea.top + 8;
 
         ctx.fillStyle = MARKER_LABEL_BG;
-        ctx.strokeStyle = "#e2e8f0";
-        ctx.lineWidth = 1;
+        ctx.strokeStyle = MARKER_LABEL_BORDER;
+        ctx.lineWidth = 1.25;
         ctx.beginPath();
         ctx.roundRect(boxX, boxY, boxW, boxH, 3);
         ctx.fill();

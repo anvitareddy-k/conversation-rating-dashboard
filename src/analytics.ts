@@ -1,5 +1,5 @@
-import type { LoadedBatch, RatingRow, TagKind, TagStatRow, FunnelOrder } from "./parsing";
-import { computeTagStats, filterRowsByTags, isLowRated, type TagFilterState } from "./parsing";
+import type { LoadedBatch, PickableTagKind, RatingRow, TagKind, TagStatRow, FunnelOrder } from "./parsing";
+import { computeTagStats, filterRowsByTags, isLowRated, pickTagsByKind, type TagFilterState } from "./parsing";
 import { kindLabel } from "./labels";
 
 export type TimelinePoint = {
@@ -123,7 +123,7 @@ export function computeDailyLowRatedSeries(batches: LoadedBatch[]): DailyLowRate
 
 export type FunnelStep = {
   label: string;
-  kind: "pool" | "qa" | "discovery" | "score";
+  kind: "pool" | "qa" | "category" | "score";
   count: number;
   pctOfStart: number;
   dropFromPrev: number | null;
@@ -204,6 +204,7 @@ function poolFromBatch(batch: LoadedBatch, lowScoreOnly: boolean): RatingRow[] {
 
 function rowHasTag(row: RatingRow, tag: string, kind: TagKind): boolean {
   if (kind === "qa") return row.qaTags.includes(tag);
+  if (kind === "category") return row.categoryTags.includes(tag);
   if (kind === "discovery") return row.discoveryTags.includes(tag);
   return row.structuralTags.includes(tag);
 }
@@ -331,25 +332,22 @@ export function computeFunnelSteps(
     prevCount = pushStep(`Score ≤ ${filter.maxScore}`, "score", after.length, prevCount);
   }
 
-  let current = filterRowsByTags(pool, { ...filter, qaTags: [], discoveryTags: [] });
+  let current = filterRowsByTags(pool, { ...filter, qaTags: [], categoryTags: [] });
 
   const order: FunnelOrder = filter.funnelOrder ?? "categories-first";
-  const sequence: { tag: string; kind: "qa" | "discovery" }[] =
+  const sequence: { tag: string; kind: PickableTagKind }[] =
     order === "categories-first"
       ? [
-          ...filter.discoveryTags.map((tag) => ({ tag, kind: "discovery" as const })),
+          ...filter.categoryTags.map((tag) => ({ tag, kind: "category" as const })),
           ...filter.qaTags.map((tag) => ({ tag, kind: "qa" as const })),
         ]
       : [
           ...filter.qaTags.map((tag) => ({ tag, kind: "qa" as const })),
-          ...filter.discoveryTags.map((tag) => ({ tag, kind: "discovery" as const })),
+          ...filter.categoryTags.map((tag) => ({ tag, kind: "category" as const })),
         ];
 
   for (const { tag, kind } of sequence) {
-    const next =
-      kind === "qa"
-        ? current.filter((r) => r.qaTags.includes(tag))
-        : current.filter((r) => r.discoveryTags.includes(tag));
+    const next = current.filter((r) => pickTagsByKind(r, kind).includes(tag));
     prevCount = pushStep(`+ ${kindLabel(kind)}: ${tag}`, kind, next.length, prevCount);
     current = next;
   }
@@ -361,25 +359,21 @@ export function computeFunnelSteps(
 export function getFunnelStatsPool(
   pool: RatingRow[],
   qaTags: string[],
-  discoveryTags: string[],
+  categoryTags: string[],
   funnelOrder: FunnelOrder,
   forPicker: "categories" | "tags"
 ): RatingRow[] {
   let current = pool;
 
   if (funnelOrder === "categories-first") {
-    // Tags picker: % within selected categories
-    if (forPicker === "tags" || forPicker === "categories") {
-      for (const cat of discoveryTags) {
-        current = current.filter((r) => r.discoveryTags.includes(cat));
+    if (forPicker === "tags") {
+      for (const cat of categoryTags) {
+        current = current.filter((r) => r.categoryTags.includes(cat));
       }
     }
-  } else {
-    // Categories picker: % within selected tags
-    if (forPicker === "categories" || forPicker === "tags") {
-      for (const tag of qaTags) {
-        current = current.filter((r) => r.qaTags.includes(tag));
-      }
+  } else if (forPicker === "categories") {
+    for (const tag of qaTags) {
+      current = current.filter((r) => r.qaTags.includes(tag));
     }
   }
 
@@ -391,7 +385,7 @@ export function getFunnelMatchedRows(
   pool: RatingRow[],
   filter: TagFilterState
 ): RatingRow[] {
-  if (!filter.qaTags.length && !filter.discoveryTags.length) return [];
+  if (!filter.qaTags.length && !filter.categoryTags.length) return [];
   return filterRowsByTags(pool, { ...filter, matchMode: "all" });
 }
 

@@ -1,4 +1,9 @@
-export type TagKind = "qa" | "discovery" | "structural";
+import { isCategoryVocabularyTag } from "./tagDefinitions";
+
+export type TagKind = "qa" | "category" | "discovery" | "structural";
+
+/** Issue tags and categories — used in charts, timeline, filters, and funnel. */
+export type PickableTagKind = "qa" | "category";
 
 export type RatingRow = {
   chatbot_sid?: string;
@@ -11,14 +16,16 @@ export type RatingRow = {
   axis3: number;
   /** QA failure tags only */
   qaTags: string[];
-  /** Product/workflow discovery tags */
+  /** Conversation category labels (category_tags column) */
+  categoryTags: string[];
+  /** Product/workflow discovery tags (discovery_tags column) */
   discoveryTags: string[];
   /** Session structure tags (Slotfill, Video, …) */
   structuralTags: string[];
   tagReasons: Record<string, string>;
   discoveryTagReasons: Record<string, string>;
   reasoning?: string;
-  /** All display tags combined (structural + qa + discovery) */
+  /** All display tags combined (structural + qa + category + discovery) */
   tags: string[];
   /** Source file batch id (for timeline) */
   batchId?: string;
@@ -72,12 +79,105 @@ export function filterRows(rows: RatingRow[], start: Date | null, end: Date | nu
   return rows.filter((r) => rowInRange(r, start, end));
 }
 
+export type AppliedTimeRange = { start: Date | null; end: Date | null };
+
+/** Parse `datetime-local` value as range start (minute precision). */
+export function parseDatetimeLocalStart(value: string): Date | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const d = new Date(trimmed);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** Parse `datetime-local` value as inclusive range end (covers the full selected minute). */
+export function parseDatetimeLocalEnd(value: string): Date | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const d = new Date(trimmed);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Date(d.getTime() + 59_999);
+}
+
+export function appliedRangeFromStrings(startStr: string, endStr: string): AppliedTimeRange {
+  return {
+    start: parseDatetimeLocalStart(startStr),
+    end: parseDatetimeLocalEnd(endStr),
+  };
+}
+
+export function filterBatchesByRange(
+  batches: LoadedBatch[],
+  start: Date | null,
+  end: Date | null
+): LoadedBatch[] {
+  if (start === null && end === null) return batches;
+  return batches
+    .map((b) => ({ ...b, rows: filterRows(b.rows, start, end) }))
+    .filter((b) => b.rows.length > 0);
+}
+
+export function sessionTimeRangeFromRows(rows: RatingRow[]): {
+  startStr: string;
+  endStr: string;
+  applied: AppliedTimeRange;
+} | null {
+  const times = rows.map((r) => parseSessionTime(r.time)).filter(Boolean) as Date[];
+  if (!times.length) return null;
+  const min = new Date(Math.min(...times.map((d) => d.getTime())));
+  const max = new Date(Math.max(...times.map((d) => d.getTime())));
+  const startStr = setDatetimeLocalValue(min);
+  const endStr = setDatetimeLocalValue(max);
+  return { startStr, endStr, applied: appliedRangeFromStrings(startStr, endStr) };
+}
+
 function splitTags(tagsCell: string | undefined): string[] {
   if (tagsCell == null || String(tagsCell).trim() === "") return [];
   return String(tagsCell)
     .split(/\s*\|\s*/)
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+/** Case-insensitive CSV column lookup (handles BOM / spaced header names). */
+function csvColumn(row: Record<string, string>, ...names: string[]): string | undefined {
+  for (const name of names) {
+    if (row[name] !== undefined) return row[name];
+  }
+  const norm = new Map(
+    Object.entries(row).map(([k, v]) => [k.trim().replace(/^\uFEFF/, "").toLowerCase(), v])
+  );
+  for (const name of names) {
+    const v = norm.get(name.toLowerCase());
+    if (v !== undefined) return v;
+  }
+  return undefined;
+}
+
+/**
+ * CSV exports often put subject/topic tags (Physics, Science, …) in category_tags.
+ * Keep prompt vocabulary as categories; route everything else to discovery tags.
+ */
+export function splitCategoryAndDiscoveryTags(
+  categoryFromCol: string[],
+  discoveryFromCol: string[]
+): { categoryTags: string[]; discoveryTags: string[] } {
+  const categoryTags: string[] = [];
+  const discoveryTags: string[] = [];
+
+  const ingest = (tag: string) => {
+    const t = tag.trim();
+    if (!t) return;
+    if (isCategoryVocabularyTag(t)) {
+      if (!categoryTags.includes(t)) categoryTags.push(t);
+      return;
+    }
+    if (!discoveryTags.includes(t)) discoveryTags.push(t);
+  };
+
+  for (const t of categoryFromCol) ingest(t);
+  for (const t of discoveryFromCol) ingest(t);
+
+  return { categoryTags, discoveryTags };
 }
 
 function parseTagReasonsFromList(listEl: Element | null): Record<string, string> {
@@ -99,9 +199,15 @@ function classifyHeaderBadge(el: Element): { kind: TagKind; tag: string } | null
   const tag = (el.textContent || "").trim();
   if (!tag || /^Overall Score:/i.test(tag)) return null;
   const cls = el.className || "";
-  if (/\bdiscovery-tag\b/.test(cls) || /\bcategory-tag\b/.test(cls)) return { kind: "discovery", tag };
+  if (/\bdiscovery-tag\b/.test(cls)) return { kind: "discovery", tag };
+  if (/\bcategory-tag\b/.test(cls)) return { kind: "category", tag };
   if (/\btag\b/.test(cls) && !/\bcategory-tag\b/.test(cls)) return { kind: "qa", tag };
   return { kind: "structural", tag };
+}
+
+export function pickTagsByKind(row: RatingRow, kind: PickableTagKind): string[] {
+  if (kind === "qa") return row.qaTags;
+  return row.categoryTags;
 }
 
 export function normalizeRowsFromCsv(data: Record<string, string>[]): RatingRow[] {
@@ -111,27 +217,26 @@ export function normalizeRowsFromCsv(data: Record<string, string>[]): RatingRow[
     const axis1 = parseFloat(r.axis1);
     const axis2 = parseFloat(r.axis2);
     const axis3 = parseFloat(r.axis3);
-    const allTags = splitTags(r.tags);
-    const categoryFromCol = splitTags(r.category_tags);
-    const discoveryFromCol = splitTags(r.discovery_tags);
-    const qaFromCol = splitTags(r.qa_tags || r.issue_tags);
+    const allTags = splitTags(csvColumn(r, "tags"));
+    const categoryFromCol = splitTags(csvColumn(r, "category_tags", "category tags"));
+    const discoveryFromCol = splitTags(csvColumn(r, "discovery_tags", "discovery tags"));
+    const qaFromCol = splitTags(
+      csvColumn(r, "qa_tags", "issue_tags", "qa tags", "issue tags")
+    );
+    const { categoryTags: categoryTagsRaw, discoveryTags: discoveryTagsRaw } =
+      splitCategoryAndDiscoveryTags(categoryFromCol, discoveryFromCol);
+    const taggedInCols = new Set([...categoryFromCol, ...discoveryFromCol]);
     const structuralTags = allTags.filter((t) => isStructuralTag(t));
     const qaTagsRaw = qaFromCol.length
       ? qaFromCol
       : allTags.filter(
-          (t) =>
-            !isStructuralTag(t) &&
-            !categoryFromCol.includes(t) &&
-            !discoveryFromCol.includes(t)
+          (t) => !isStructuralTag(t) && !taggedInCols.has(t)
         );
-    const discoveryTagsRaw =
-      categoryFromCol.length || discoveryFromCol.length
-        ? [
-            ...categoryFromCol,
-            ...discoveryFromCol.filter((t) => !categoryFromCol.includes(t)),
-          ]
-        : [];
-    const { qaTags, discoveryTags } = disjointTagLists(qaTagsRaw, discoveryTagsRaw);
+    const { qaTags, categoryTags, discoveryTags } = disjointTagLists(
+      qaTagsRaw,
+      categoryTagsRaw,
+      discoveryTagsRaw
+    );
     rows.push({
       chatbot_sid: r.chatbot_sid,
       time: r.time,
@@ -142,12 +247,13 @@ export function normalizeRowsFromCsv(data: Record<string, string>[]): RatingRow[
       axis2: Number.isFinite(axis2) ? axis2 : NaN,
       axis3: Number.isFinite(axis3) ? axis3 : NaN,
       qaTags,
+      categoryTags,
       discoveryTags,
       structuralTags,
       tagReasons: {},
       discoveryTagReasons: {},
       reasoning: r.reasoning,
-      tags: [...structuralTags, ...qaTags, ...discoveryTags],
+      tags: [...structuralTags, ...qaTags, ...categoryTags, ...discoveryTags],
     });
   }
   return rows;
@@ -193,6 +299,7 @@ export function normalizeRowsFromHtml(htmlText: string): RatingRow[] {
     }
 
     const qaTags: string[] = [];
+    const categoryTags: string[] = [];
     const discoveryTags: string[] = [];
     const structuralTags: string[] = [];
 
@@ -201,12 +308,18 @@ export function normalizeRowsFromHtml(htmlText: string): RatingRow[] {
         const c = classifyHeaderBadge(b);
         if (!c) return;
         if (c.kind === "qa" && !qaTags.includes(c.tag)) qaTags.push(c.tag);
+        else if (c.kind === "category" && !categoryTags.includes(c.tag)) categoryTags.push(c.tag);
         else if (c.kind === "discovery" && !discoveryTags.includes(c.tag)) discoveryTags.push(c.tag);
         else if (c.kind === "structural" && !structuralTags.includes(c.tag)) structuralTags.push(c.tag);
       });
     }
 
-    card.querySelectorAll(".discovery-tags-row .badge.discovery-tag, .category-tags-row .badge.category-tag").forEach((b) => {
+    card.querySelectorAll(".category-tags-row .badge.category-tag").forEach((b) => {
+      const t = (b.textContent || "").trim();
+      if (t && !categoryTags.includes(t)) categoryTags.push(t);
+    });
+
+    card.querySelectorAll(".discovery-tags-row .badge.discovery-tag").forEach((b) => {
       const t = (b.textContent || "").trim();
       if (t && !discoveryTags.includes(t)) discoveryTags.push(t);
     });
@@ -216,7 +329,7 @@ export function normalizeRowsFromHtml(htmlText: string): RatingRow[] {
       .map((s) => s.trim())
       .filter(Boolean);
     for (const t of categoryFromData) {
-      if (!discoveryTags.includes(t)) discoveryTags.push(t);
+      if (!categoryTags.includes(t)) categoryTags.push(t);
     }
 
     const discoveryFromData = (card.getAttribute("data-discovery-tags") || "")
@@ -252,10 +365,17 @@ export function normalizeRowsFromHtml(htmlText: string): RatingRow[] {
       if (!qaTags.includes(t)) qaTags.push(t);
     }
     for (const t of Object.keys(discoveryTagReasons)) {
-      if (!discoveryTags.includes(t)) discoveryTags.push(t);
+      if (!discoveryTags.includes(t) && !categoryTags.includes(t)) discoveryTags.push(t);
     }
 
-    const disjoint = disjointTagLists(qaTags, discoveryTags);
+    const { categoryTags: splitCategories, discoveryTags: splitDiscovery } =
+      splitCategoryAndDiscoveryTags(categoryTags, discoveryTags);
+    categoryTags.length = 0;
+    categoryTags.push(...splitCategories);
+    discoveryTags.length = 0;
+    discoveryTags.push(...splitDiscovery);
+
+    const disjoint = disjointTagLists(qaTags, categoryTags, discoveryTags);
 
     let reasoning = "";
     const summaryEl = card.querySelector(".reasoning");
@@ -275,12 +395,18 @@ export function normalizeRowsFromHtml(htmlText: string): RatingRow[] {
       axis2,
       axis3,
       qaTags: disjoint.qaTags,
+      categoryTags: disjoint.categoryTags,
       discoveryTags: disjoint.discoveryTags,
       structuralTags,
       tagReasons,
       discoveryTagReasons,
       reasoning,
-      tags: [...structuralTags, ...disjoint.qaTags, ...disjoint.discoveryTags],
+      tags: [
+        ...structuralTags,
+        ...disjoint.qaTags,
+        ...disjoint.categoryTags,
+        ...disjoint.discoveryTags,
+      ],
     });
   });
 
@@ -289,12 +415,16 @@ export function normalizeRowsFromHtml(htmlText: string): RatingRow[] {
 
 export function disjointTagLists(
   qaTags: string[],
+  categoryTags: string[],
   discoveryTags: string[]
-): { qaTags: string[]; discoveryTags: string[] } {
+): { qaTags: string[]; categoryTags: string[]; discoveryTags: string[] } {
+  const catSet = new Set(categoryTags);
   const discSet = new Set(discoveryTags);
+  const nonQa = new Set([...catSet, ...discSet]);
   return {
-    qaTags: qaTags.filter((t) => !discSet.has(t)),
-    discoveryTags,
+    qaTags: qaTags.filter((t) => !nonQa.has(t)),
+    categoryTags,
+    discoveryTags: discoveryTags.filter((t) => !catSet.has(t)),
   };
 }
 
@@ -340,15 +470,18 @@ export function computeTagStats(
     .sort((a, b) => b.count - a.count);
 }
 
-/** Tag stats with names that appear only in one list (tags vs categories). */
+/** Tag stats with names that appear only in one list (issue tags vs categories). */
 export function computeExclusiveTagStats(
   pool: RatingRow[],
-  kind: "qa" | "discovery",
+  kind: PickableTagKind,
   totalCount: number
 ): TagStatRow[] {
-  const otherTags = new Set(pool.flatMap((r) => (kind === "qa" ? r.discoveryTags : r.qaTags)));
-  const pick = kind === "qa" ? (r: RatingRow) => r.qaTags : (r: RatingRow) => r.discoveryTags;
-  return computeTagStats(pool, pick, totalCount).filter((row) => !otherTags.has(row.tag));
+  const otherTags = new Set(
+    pool.flatMap((r) => (kind === "qa" ? r.categoryTags : r.qaTags))
+  );
+  return computeTagStats(pool, (r) => pickTagsByKind(r, kind), totalCount).filter(
+    (row) => !otherTags.has(row.tag)
+  );
 }
 
 /** @deprecated use computeTagStats */
@@ -366,7 +499,7 @@ export type FunnelOrder = "categories-first" | "tags-first";
 
 export type TagFilterState = {
   qaTags: string[];
-  discoveryTags: string[];
+  categoryTags: string[];
   /** Sessions must include every selected tag (funnel AND). */
   matchMode: "all" | "any";
   maxScore: number | null;
@@ -378,7 +511,7 @@ export type TagFilterState = {
 export function defaultTagFilter(): TagFilterState {
   return {
     qaTags: [],
-    discoveryTags: [],
+    categoryTags: [],
     matchMode: "all",
     maxScore: null,
     lowScoreOnly: true,
@@ -393,8 +526,8 @@ export function rowMatchesTagFilter(row: RatingRow, filter: TagFilterState): boo
   }
 
   const qaSel = filter.qaTags;
-  const discSel = filter.discoveryTags;
-  if (!qaSel.length && !discSel.length) return true;
+  const catSel = filter.categoryTags;
+  if (!qaSel.length && !catSel.length) return true;
 
   const matchList = (selected: string[], have: string[]) => {
     if (!selected.length) return true;
@@ -404,7 +537,7 @@ export function rowMatchesTagFilter(row: RatingRow, filter: TagFilterState): boo
     return selected.every((t) => have.includes(t));
   };
 
-  return matchList(qaSel, row.qaTags) && matchList(discSel, row.discoveryTags);
+  return matchList(qaSel, row.qaTags) && matchList(catSel, row.categoryTags);
 }
 
 export function filterRowsByTags(rows: RatingRow[], filter: TagFilterState): RatingRow[] {

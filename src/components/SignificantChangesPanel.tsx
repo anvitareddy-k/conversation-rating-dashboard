@@ -10,6 +10,7 @@ import {
   type TimelineInsightWindow,
 } from "../timelineInsights";
 import { getTagDescriptionOrDefault } from "../tagDefinitions";
+import type { PickableTagKind } from "../parsing";
 import type { ReleaseMarker } from "../releaseMarkers";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip);
@@ -24,7 +25,7 @@ type SignificantChangesPanelProps = {
   onSelectRelease: (id: string) => void;
   changePointBatchId: string | null;
   onChangePointBatchId: (batchId: string) => void;
-  onSelectTag?: (tag: string, kind: "qa" | "discovery") => void;
+  onSelectTag?: (tag: string, kind: PickableTagKind) => void;
 };
 
 /** Draw pp delta on horizontal bars — inside bar when wide enough, else outside away from y labels. */
@@ -93,8 +94,8 @@ function buildChartData(rows: ShiftChartRow[]) {
 
 function buildChartOptions(
   rows: ShiftChartRow[],
-  kind: "qa" | "discovery",
-  onSelectTag?: (tag: string, kind: "qa" | "discovery") => void
+  kind: PickableTagKind,
+  onSelectTag?: (tag: string, kind: PickableTagKind) => void
 ) {
   const sorted = [...rows].sort((a, b) => a.deltaPct - b.deltaPct);
   return {
@@ -161,8 +162,8 @@ function ChangesSection({
 }: {
   title: string;
   rows: ShiftChartRow[];
-  kind: "qa" | "discovery";
-  onSelectTag?: (tag: string, kind: "qa" | "discovery") => void;
+  kind: PickableTagKind;
+  onSelectTag?: (tag: string, kind: PickableTagKind) => void;
 }) {
   const chartData = useMemo(() => buildChartData(rows), [rows]);
   const chartOptions = useMemo(
@@ -205,10 +206,26 @@ function resolveActiveWindow(
   if (!chartWindows.length) return null;
 
   if (releaseMarkers.length > 0) {
-    if (selectedReleaseId) {
-      return chartWindows.find((w) => w.id === selectedReleaseId) ?? null;
+    const releaseId = selectedReleaseId ?? releaseMarkers[0]?.id ?? null;
+    if (releaseId) {
+      const releaseWindow = chartWindows.find((w) => w.id === releaseId);
+      if (releaseWindow) return releaseWindow;
+
+      const marker = releaseMarkers.find((m) => m.id === releaseId);
+      if (marker) {
+        const changePointWindow = chartWindows.find(
+          (w) => w.scope === "change_point" && w.splitBatchId === marker.batchId
+        );
+        if (changePointWindow) return changePointWindow;
+      }
     }
-    return null;
+
+    return (
+      chartWindows.find((w) => w.scope === "release") ??
+      chartWindows.find((w) => w.scope === "change_point") ??
+      chartWindows[0] ??
+      null
+    );
   }
 
   if (changePointBatchId) {
@@ -247,7 +264,7 @@ export function SignificantChangesPanel({
   );
 
   const categoryRows = useMemo(
-    () => (activeWindow ? shiftsForChartByKind(activeWindow, "discovery", 10) : []),
+    () => (activeWindow ? shiftsForChartByKind(activeWindow, "category", 10) : []),
     [activeWindow]
   );
 
@@ -258,7 +275,7 @@ export function SignificantChangesPanel({
 
   if (!hasAnyWindow) return null;
 
-  const releaseWindows = insights.windows.filter((w) => w.scope === "release");
+  const activeReleaseId = selectedReleaseId ?? releaseMarkers[0]?.id ?? null;
 
   return (
     <section className="tl-changes-panel">
@@ -273,20 +290,16 @@ export function SignificantChangesPanel({
 
       {releaseMarkers.length > 0 ? (
         <div className="tl-changes-tabs">
-          {releaseWindows.map((w) => {
-            const marker = releaseMarkers.find((m) => m.id === w.id);
-            if (!marker) return null;
-            return (
-              <button
-                key={w.id}
-                type="button"
-                className={selectedReleaseId === w.id ? "active" : ""}
-                onClick={() => onSelectRelease(w.id)}
-              >
-                {marker.label}
-              </button>
-            );
-          })}
+          {releaseMarkers.map((marker) => (
+            <button
+              key={marker.id}
+              type="button"
+              className={activeReleaseId === marker.id ? "active" : ""}
+              onClick={() => onSelectRelease(marker.id)}
+            >
+              {marker.label}
+            </button>
+          ))}
         </div>
       ) : (
         <div className="tl-changes-split-control">
@@ -331,7 +344,7 @@ export function SignificantChangesPanel({
           <ChangesSection
             title={LABELS.categories}
             rows={categoryRows}
-            kind="discovery"
+            kind="category"
             onSelectTag={onSelectTag}
           />
         </div>

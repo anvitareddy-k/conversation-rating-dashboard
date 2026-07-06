@@ -3,7 +3,7 @@ import type { FunnelStep } from "../analytics";
 import { computeFunnelSteps, getFunnelMatchedRows, getFunnelStatsPool } from "../analytics";
 import { LABELS } from "../labels";
 import { KindBadge } from "./KindBadge";
-import type { FunnelOrder, RatingRow, TagFilterState, TagStatRow } from "../parsing";
+import type { FunnelOrder, PickableTagKind, RatingRow, TagFilterState, TagStatRow } from "../parsing";
 import { computeTagStats } from "../parsing";
 
 type FunnelTabProps = {
@@ -14,10 +14,10 @@ type FunnelTabProps = {
   poolLabel: string;
 };
 
-function kindLabel(kind: FunnelStep["kind"]): string {
-  if (kind === "qa") return LABELS.tags;
-  if (kind === "discovery") return LABELS.categories;
-  if (kind === "score") return "Score";
+function kindLabel(stepKind: FunnelStep["kind"]): string {
+  if (stepKind === "qa") return LABELS.tags;
+  if (stepKind === "category") return LABELS.categories;
+  if (stepKind === "score") return "Score";
   return "Pool";
 }
 
@@ -130,17 +130,18 @@ function FunnelTagChip({
   onClick,
 }: {
   row: TagStatRow;
-  kind: "qa" | "discovery";
+  kind: PickableTagKind;
   active: boolean;
   stepNum: number | null;
   maxPct: number;
   onClick: () => void;
 }) {
   const barPct = maxPct > 0 ? Math.min(100, (100 * row.pctOfPool) / maxPct) : 0;
+  const chipClass = kind === "category" ? "discovery" : kind;
   return (
     <button
       type="button"
-      className={`funnel-tag-chip ${kind} ${active ? "active" : ""}`}
+      className={`funnel-tag-chip ${chipClass} ${active ? "active" : ""}`}
       onClick={onClick}
       title={`${row.count} sessions · ${row.pctOfPool.toFixed(1)}% of step pool`}
     >
@@ -227,8 +228,8 @@ function FunnelSessionsPanel({ rows }: { rows: RatingRow[] }) {
                 <td>{Number.isFinite(r.overall_score) ? r.overall_score.toFixed(2) : "—"}</td>
                 <td>
                   <div className="mini-tags">
-                    {r.discoveryTags.map((t) => (
-                      <span key={t} className="mini-tag discovery">
+                    {r.categoryTags.map((t) => (
+                      <span key={t} className="mini-tag category">
                         {t}
                       </span>
                     ))}
@@ -282,7 +283,7 @@ export function FunnelTab({
   poolLabel,
 }: FunnelTabProps) {
   const [builderQa, setBuilderQa] = useState<string[]>(tagFilter.qaTags);
-  const [builderDisc, setBuilderDisc] = useState<string[]>(tagFilter.discoveryTags);
+  const [builderCat, setBuilderCat] = useState<string[]>(tagFilter.categoryTags);
   const [funnelOrder, setFunnelOrder] = useState<FunnelOrder>(
     tagFilter.funnelOrder ?? "categories-first"
   );
@@ -292,19 +293,19 @@ export function FunnelTab({
   const categoriesFirst = funnelOrder === "categories-first";
 
   const categoryStatsPool = useMemo(
-    () => getFunnelStatsPool(pool, builderQa, builderDisc, funnelOrder, "categories"),
-    [pool, builderQa, builderDisc, funnelOrder]
+    () => getFunnelStatsPool(pool, builderQa, builderCat, funnelOrder, "categories"),
+    [pool, builderQa, builderCat, funnelOrder]
   );
 
   const tagStatsPool = useMemo(
-    () => getFunnelStatsPool(pool, builderQa, builderDisc, funnelOrder, "tags"),
-    [pool, builderQa, builderDisc, funnelOrder]
+    () => getFunnelStatsPool(pool, builderQa, builderCat, funnelOrder, "tags"),
+    [pool, builderQa, builderCat, funnelOrder]
   );
 
-  const discStats = useMemo(() => {
-    const categoryNames = new Set(pool.flatMap((r) => r.discoveryTags));
-    return computeTagStats(categoryStatsPool, (r) => r.discoveryTags, totalCount).filter(
-      (row) => categoryNames.has(row.tag)
+  const catStats = useMemo(() => {
+    const categoryNames = new Set(pool.flatMap((r) => r.categoryTags));
+    return computeTagStats(categoryStatsPool, (r) => r.categoryTags, totalCount).filter((row) =>
+      categoryNames.has(row.tag)
     );
   }, [categoryStatsPool, totalCount, pool]);
 
@@ -315,11 +316,11 @@ export function FunnelTab({
     );
   }, [tagStatsPool, totalCount, pool]);
 
-  const filteredDiscStats = useMemo(() => {
+  const filteredCatStats = useMemo(() => {
     const q = categorySearch.trim().toLowerCase();
-    const list = q ? discStats.filter((r) => r.tag.toLowerCase().includes(q)) : discStats;
+    const list = q ? catStats.filter((r) => r.tag.toLowerCase().includes(q)) : catStats;
     return list.slice(0, 32);
-  }, [discStats, categorySearch]);
+  }, [catStats, categorySearch]);
 
   const filteredQaStats = useMemo(() => {
     const q = tagSearch.trim().toLowerCase();
@@ -327,9 +328,9 @@ export function FunnelTab({
     return list.slice(0, 32);
   }, [qaStats, tagSearch]);
 
-  const maxDiscPct = useMemo(
-    () => Math.max(...filteredDiscStats.map((r) => r.pctOfPool), 1),
-    [filteredDiscStats]
+  const maxCatPct = useMemo(
+    () => Math.max(...filteredCatStats.map((r) => r.pctOfPool), 1),
+    [filteredCatStats]
   );
 
   const maxQaPct = useMemo(
@@ -340,7 +341,7 @@ export function FunnelTab({
   const builderFilter: TagFilterState = {
     ...tagFilter,
     qaTags: builderQa,
-    discoveryTags: builderDisc,
+    categoryTags: builderCat,
     funnelOrder,
     matchMode: "all",
   };
@@ -353,25 +354,25 @@ export function FunnelTab({
   );
 
   const orderedSelections = useMemo(() => {
-    const items: { tag: string; kind: "qa" | "discovery"; step: number }[] = [];
+    const items: { tag: string; kind: PickableTagKind; step: number }[] = [];
     let n = 1;
     if (categoriesFirst) {
-      for (const tag of builderDisc) items.push({ tag, kind: "discovery", step: n++ });
+      for (const tag of builderCat) items.push({ tag, kind: "category", step: n++ });
       for (const tag of builderQa) items.push({ tag, kind: "qa", step: n++ });
     } else {
       for (const tag of builderQa) items.push({ tag, kind: "qa", step: n++ });
-      for (const tag of builderDisc) items.push({ tag, kind: "discovery", step: n++ });
+      for (const tag of builderCat) items.push({ tag, kind: "category", step: n++ });
     }
     return items;
-  }, [builderDisc, builderQa, categoriesFirst]);
+  }, [builderCat, builderQa, categoriesFirst]);
 
-  const globalStepNumber = (kind: "qa" | "discovery", tag: string): number | null => {
-    const catIdx = builderDisc.indexOf(tag);
+  const globalStepNumber = (kind: PickableTagKind, tag: string): number | null => {
+    const catIdx = builderCat.indexOf(tag);
     const tagIdx = builderQa.indexOf(tag);
-    if (kind === "discovery" && catIdx === -1) return null;
+    if (kind === "category" && catIdx === -1) return null;
     if (kind === "qa" && tagIdx === -1) return null;
     if (categoriesFirst) {
-      return kind === "discovery" ? catIdx + 1 : builderDisc.length + tagIdx + 1;
+      return kind === "category" ? catIdx + 1 : builderCat.length + tagIdx + 1;
     }
     return kind === "qa" ? tagIdx + 1 : builderQa.length + catIdx + 1;
   };
@@ -380,7 +381,7 @@ export function FunnelTab({
     onUpdateFilter((f) => ({
       ...f,
       qaTags: builderQa,
-      discoveryTags: builderDisc,
+      categoryTags: builderCat,
       funnelOrder,
       matchMode: "all",
     }));
@@ -388,14 +389,14 @@ export function FunnelTab({
 
   const clearBuilder = () => {
     setBuilderQa([]);
-    setBuilderDisc([]);
+    setBuilderCat([]);
     setCategorySearch("");
     setTagSearch("");
   };
 
-  const removeSelection = (tag: string, kind: "qa" | "discovery") => {
+  const removeSelection = (tag: string, kind: PickableTagKind) => {
     if (kind === "qa") setBuilderQa((prev) => prev.filter((t) => t !== tag));
-    else setBuilderDisc((prev) => prev.filter((t) => t !== tag));
+    else setBuilderCat((prev) => prev.filter((t) => t !== tag));
   };
 
   const renderCategoryPicker = () => (
@@ -409,12 +410,12 @@ export function FunnelTab({
               categoryStatsPool,
               pool,
               categoriesFirst,
-              builderDisc.length > 0,
+              builderCat.length > 0,
               builderQa.length > 0
             )}
           </span>
         </h2>
-        <KindBadge kind="discovery" />
+        <KindBadge kind="category" />
       </div>
       <input
         type="search"
@@ -424,16 +425,16 @@ export function FunnelTab({
         onChange={(e) => setCategorySearch(e.target.value)}
       />
       <div className="funnel-tag-chip-grid">
-        {filteredDiscStats.map((row) => (
+        {filteredCatStats.map((row) => (
           <FunnelTagChip
             key={row.tag}
             row={row}
-            kind="discovery"
-            active={builderDisc.includes(row.tag)}
-            stepNum={globalStepNumber("discovery", row.tag)}
-            maxPct={maxDiscPct}
+            kind="category"
+            active={builderCat.includes(row.tag)}
+            stepNum={globalStepNumber("category", row.tag)}
+            maxPct={maxCatPct}
             onClick={() =>
-              setBuilderDisc((prev) =>
+              setBuilderCat((prev) =>
                 prev.includes(row.tag) ? prev.filter((t) => t !== row.tag) : [...prev, row.tag]
               )
             }
@@ -454,7 +455,7 @@ export function FunnelTab({
               tagStatsPool,
               pool,
               categoriesFirst,
-              builderDisc.length > 0,
+              builderCat.length > 0,
               builderQa.length > 0
             )}
           </span>
@@ -488,7 +489,7 @@ export function FunnelTab({
     </div>
   );
 
-  const hasSelection = builderQa.length > 0 || builderDisc.length > 0;
+  const hasSelection = builderQa.length > 0 || builderCat.length > 0;
 
   return (
     <div className="funnel-tab">
@@ -526,7 +527,7 @@ export function FunnelTab({
               <button
                 key={`${item.kind}-${item.tag}`}
                 type="button"
-                className={`funnel-path-pill ${item.kind}`}
+                className={`funnel-path-pill ${item.kind === "category" ? "discovery" : item.kind}`}
                 onClick={() => removeSelection(item.tag, item.kind)}
                 title="Remove step"
               >

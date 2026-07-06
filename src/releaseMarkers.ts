@@ -40,6 +40,21 @@ function batchDayTime(batch: LoadedBatch): number | null {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 }
 
+/** Marker is usable only when its batch exists and has a calendar date. */
+export function isResolvableReleaseMarker(
+  marker: ReleaseMarker,
+  sortedBatches: LoadedBatch[]
+): boolean {
+  const batch = sortedBatches.find((b) => b.id === marker.batchId);
+  return batch != null && batch.periodDate != null;
+}
+
+export function pruneInvalidManualReleaseMarkers(sortedBatches: LoadedBatch[]): void {
+  const manual = loadManualReleaseMarkers();
+  const valid = manual.filter((m) => isResolvableReleaseMarker(m, sortedBatches));
+  if (valid.length !== manual.length) saveManualReleaseMarkers(valid);
+}
+
 export function findFirstBatchOnOrAfter(
   sortedBatches: LoadedBatch[],
   isoDate: string
@@ -77,7 +92,9 @@ export function resolveReleaseMarkers(
   manualMarkers: ReleaseMarker[],
   hiddenBuiltinIds: string[] = []
 ): ReleaseMarker[] {
-  const manual = manualMarkers.map((m) => ({ ...m, source: "manual" as const }));
+  const manual = manualMarkers
+    .map((m) => ({ ...m, source: "manual" as const }))
+    .filter((m) => isResolvableReleaseMarker(m, sortedBatches));
   const manualBatchIds = new Set(manual.map((m) => m.batchId));
   const builtin = buildBuiltinReleaseMarkers(sortedBatches, hiddenBuiltinIds).filter(
     (m) => !manualBatchIds.has(m.batchId)

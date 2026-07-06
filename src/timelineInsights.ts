@@ -1,4 +1,4 @@
-import type { LoadedBatch, RatingRow, TagKind } from "./parsing";
+import type { LoadedBatch, PickableTagKind, RatingRow, TagKind } from "./parsing";
 import { isLowRated } from "./parsing";
 import {
   computeTagTimeline,
@@ -95,6 +95,7 @@ function rowsForTagInBatches(
 ): RatingRow[] {
   return poolRows(batches, lowScoreOnly).filter((r) => {
     if (kind === "qa") return r.qaTags.includes(tag);
+    if (kind === "category") return r.categoryTags.includes(tag);
     if (kind === "discovery") return r.discoveryTags.includes(tag);
     return false;
   });
@@ -182,7 +183,7 @@ function significantShiftsFromBatches(
   );
   const discStats = topTagsAcrossBatches(
     [...beforeBatches, ...afterBatches],
-    (r) => r.discoveryTags,
+    (r) => r.categoryTags,
     lowScoreOnly
   );
 
@@ -192,7 +193,7 @@ function significantShiftsFromBatches(
     if (s?.significant) shifts.push(s);
   }
   for (const { tag } of discStats) {
-    const s = buildTagShift(tag, "discovery", beforeBatches, afterBatches, lowScoreOnly);
+    const s = buildTagShift(tag, "category", beforeBatches, afterBatches, lowScoreOnly);
     if (s?.significant) shifts.push(s);
   }
 
@@ -457,7 +458,7 @@ export function shiftsForChart(window: TimelineInsightWindow, max = 10): ShiftCh
 
 export function shiftsForChartByKind(
   window: TimelineInsightWindow,
-  kind: "qa" | "discovery",
+  kind: PickableTagKind,
   max = 10
 ): ShiftChartRow[] {
   return shiftsForChart(window, max * 2)

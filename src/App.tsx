@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import Papa from "papaparse";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -9,22 +8,21 @@ import {
   Legend,
 } from "chart.js";
 import { Bar } from "react-chartjs-2";
-import type { LoadedBatch, RatingRow, TagFilterState, TagKind, TagStatRow } from "./parsing";
+import type { LoadedBatch, PickableTagKind, RatingRow, TagFilterState, TagStatRow } from "./parsing";
 import {
   createBatch,
   defaultTagFilter,
   filterRows,
   filterRowsByTags,
+  filterBatchesByRange,
+  appliedRangeFromStrings,
+  sessionTimeRangeFromRows,
   computeExclusiveTagStats,
   excludeErrorSessions,
   batchesExcludingErrors,
   isErrorSession,
   isLowRated,
   mergeAndDedupeByChatbotSid,
-  normalizeRowsFromCsv,
-  normalizeRowsFromHtml,
-  parseSessionTime,
-  setDatetimeLocalValue,
 } from "./parsing";
 import { computeBatchSummary } from "./analytics";
 import { horizontalPctBarOptions, pctBarLabelPlugin } from "./chartTheme";
@@ -32,11 +30,13 @@ import { KindBadge } from "./components/KindBadge";
 import { LABELS } from "./labels";
 import { TimelineTab } from "./components/TimelineTab";
 import { FunnelTab } from "./components/FunnelTab";
+import { DiscoveryTagsTab } from "./components/DiscoveryTagsTab";
 import { HtmlViewerTab } from "./components/HtmlViewerTab";
 import { LowRatedDailyChart } from "./components/LowRatedDailyChart";
 import {
   loadHiddenBuiltinReleaseIds,
   loadManualReleaseMarkers,
+  pruneInvalidManualReleaseMarkers,
   resolveReleaseMarkers,
 } from "./releaseMarkers";
 import {
@@ -44,10 +44,11 @@ import {
   resolveChangePointBatchId,
   saveChangePointBatchId,
 } from "./changePoint";
+import { loadBundledData, parseFileContent } from "./loadData";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip, Legend);
 
-type TabId = "overview" | "timeline" | "funnel" | "htmlviewer";
+type TabId = "overview" | "timeline" | "funnel" | "discovery" | "htmlviewer";
 
 function toggleInList(list: string[], tag: string): string[] {
   return list.includes(tag) ? list.filter((t) => t !== tag) : [...list, tag];
@@ -66,15 +67,16 @@ function TagChip({
   count: number;
   pct: string;
   active: boolean;
-  kind: "qa" | "discovery";
+  kind: PickableTagKind;
   onClick: () => void;
   onTimeline?: () => void;
 }) {
+  const chipClass = kind === "category" ? "discovery" : kind;
   return (
     <div className={`tag-chip-wrap ${active ? "active-wrap" : ""}`}>
       <button
         type="button"
-        className={`tag-chip ${kind} ${active ? "active" : ""}`}
+        className={`tag-chip ${chipClass} ${active ? "active" : ""}`}
         onClick={onClick}
         title={`${count} sessions (${pct}% of pool)`}
       >
@@ -101,6 +103,10 @@ function TagChip({
   );
 }
 
+function panelKindClass(kind: PickableTagKind): string {
+  return kind === "category" ? "categories" : "tags";
+}
+
 function TagStatsTable({
   title,
   rows,
@@ -116,25 +122,28 @@ function TagStatsTable({
   poolLabel: string;
   selected: string[];
   onToggle: (tag: string) => void;
-  onTimeline: (tag: string, kind: TagKind) => void;
-  kind: "qa" | "discovery";
+  onTimeline: (tag: string, kind: PickableTagKind) => void;
+  kind: PickableTagKind;
   showTimeline: boolean;
 }) {
+  const kindName =
+    kind === "category" ? LABELS.categories.toLowerCase() : LABELS.tags.toLowerCase();
+
   if (!rows.length) {
     return (
-      <div className={`tag-stats-panel kind-${kind === "discovery" ? "categories" : "tags"}`}>
+      <div className={`tag-stats-panel kind-${panelKindClass(kind)}`}>
         <div className="tag-stats-panel-head">
           <h3>{title}</h3>
           <KindBadge kind={kind} />
         </div>
         <p className="muted-inline">
-          No {kind === "discovery" ? LABELS.categories.toLowerCase() : LABELS.tags.toLowerCase()} in {poolLabel}.
+          No {kindName} in {poolLabel}.
         </p>
       </div>
     );
   }
   return (
-    <div className={`tag-stats-panel kind-${kind === "discovery" ? "categories" : "tags"}`}>
+    <div className={`tag-stats-panel kind-${panelKindClass(kind)}`}>
       <div className="tag-stats-panel-head">
         <h3>{title}</h3>
         <KindBadge kind={kind} />
@@ -217,13 +226,20 @@ export default function App() {
   const [htmlSources, setHtmlSources] = useState<{ name: string; text: string }[]>([]);
   const [status, setStatus] = useState("");
   const [showHtmlWarn, setShowHtmlWarn] = useState(false);
-  const [timelineFocusTag, setTimelineFocusTag] = useState<{ tag: string; kind: TagKind } | null>(null);
+  const [timelineFocusTag, setTimelineFocusTag] = useState<{ tag: string; kind: PickableTagKind } | null>(null);
   const [changePointBatchId, setChangePointBatchId] = useState<string | null>(() =>
     loadChangePointBatchId()
   );
+  const rangeStartRef = useRef<HTMLInputElement>(null);
+  const rangeEndRef = useRef<HTMLInputElement>(null);
 
-  const batchSummary = useMemo(() => computeBatchSummary(batches), [batches]);
-  const showTimeline = batches.length >= 1;
+  const rangeBatches = useMemo(() => {
+    if (appliedRange === null) return batches;
+    return filterBatchesByRange(batches, appliedRange.start, appliedRange.end);
+  }, [batches, appliedRange]);
+
+  const batchSummary = useMemo(() => computeBatchSummary(rangeBatches), [rangeBatches]);
+  const showTimeline = rangeBatches.length >= 1;
 
   const timeFilteredRows = useMemo(() => {
     if (appliedRange === null) return rawRows;
@@ -241,9 +257,9 @@ export default function App() {
   }, [timeFilteredRows, excludeErrors]);
 
   const workingBatches = useMemo(() => {
-    if (!excludeErrors) return batches;
-    return batchesExcludingErrors(batches);
-  }, [batches, excludeErrors]);
+    if (!excludeErrors) return rangeBatches;
+    return batchesExcludingErrors(rangeBatches);
+  }, [rangeBatches, excludeErrors]);
 
   const sortedWorkingBatches = useMemo(
     () =>
@@ -264,6 +280,10 @@ export default function App() {
   );
 
   useEffect(() => {
+    pruneInvalidManualReleaseMarkers(sortedWorkingBatches);
+  }, [sortedWorkingBatches]);
+
+  useEffect(() => {
     const ids = sortedWorkingBatches.map((b) => b.id);
     const markerIds = releaseMarkers.map((m) => m.batchId);
     setChangePointBatchId((prev) => resolveChangePointBatchId(ids, prev, markerIds));
@@ -272,6 +292,46 @@ export default function App() {
   useEffect(() => {
     saveChangePointBatchId(changePointBatchId);
   }, [changePointBatchId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const loaded = await loadBundledData();
+        if (cancelled || !loaded) return;
+        const { batches: newBatches, merged, htmlSources: newHtmlSources, skippedFiles } = loaded;
+        setHtmlSources(newHtmlSources);
+        setBatches(newBatches);
+        setRawRows(merged);
+        setAppliedRange(null);
+        setTagFilter(defaultTagFilter());
+        setTimelineFocusTag(null);
+        const skipNote = skippedFiles?.length
+          ? ` · skipped ${skippedFiles.length} missing file(s)`
+          : "";
+        setStatus(
+          `Auto-loaded ${newBatches.length} bundled file(s) → ${merged.length} unique session(s).${skipNote}`
+        );
+        const sessionRange = sessionTimeRangeFromRows(merged);
+        if (sessionRange) {
+          setRangeStartStr(sessionRange.startStr);
+          setRangeEndStr(sessionRange.endStr);
+          setAppliedRange(sessionRange.applied);
+        } else {
+          setRangeStartStr("");
+          setRangeEndStr("");
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.error(err);
+          setStatus(`Error loading bundled data: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const analyticsPool = useMemo(() => {
     if (tagFilter.lowScoreOnly) return baseRows.filter(isLowRated);
@@ -296,7 +356,7 @@ export default function App() {
       : "—";
 
     const qaTagStats = computeExclusiveTagStats(funnel, "qa", total);
-    const discoveryTagStats = computeExclusiveTagStats(funnel, "discovery", total);
+    const categoryTagStats = computeExclusiveTagStats(funnel, "category", total);
     const poolLabel = tagFilter.lowScoreOnly ? "≤5-rated pool" : "all sessions";
 
     return {
@@ -305,7 +365,7 @@ export default function App() {
       funnelN,
       avgOverall,
       qaTagStats,
-      discoveryTagStats,
+      categoryTagStats,
       poolLabel,
     };
   }, [baseRows, analyticsPool, funnelRows, tagFilter.lowScoreOnly]);
@@ -325,8 +385,8 @@ export default function App() {
     };
   }, [stats.qaTagStats]);
 
-  const discoveryChartData = useMemo(() => {
-    const top = stats.discoveryTagStats.slice(0, 12);
+  const categoryChartData = useMemo(() => {
+    const top = stats.categoryTagStats.slice(0, 12);
     return {
       labels: top.map((r) => (r.tag.length > 36 ? `${r.tag.slice(0, 33)}…` : r.tag)),
       datasets: [
@@ -338,7 +398,7 @@ export default function App() {
         },
       ],
     };
-  }, [stats.discoveryTagStats]);
+  }, [stats.categoryTagStats]);
 
   const tagsBarOptions = useMemo(() => horizontalPctBarOptions(), []);
 
@@ -372,16 +432,10 @@ export default function App() {
         const newHtmlSources: { name: string; text: string }[] = [];
         for (let i = 0; i < files.length; i++) {
           const file = files[i];
-          const name = (file.name || "").toLowerCase();
-          const isHtml = name.endsWith(".html") || file.type === "text/html";
           const text = await readFileAsText(file);
-          if (isHtml) newHtmlSources.push({ name: file.name, text });
-          const rows = isHtml
-            ? normalizeRowsFromHtml(text)
-            : normalizeRowsFromCsv(
-                Papa.parse<Record<string, string>>(text, { header: true, skipEmptyLines: true }).data
-              );
-          const batch = createBatch(file.name, rows);
+          const parsed = parseFileContent(file.name, text);
+          if (parsed.htmlSource) newHtmlSources.push(parsed.htmlSource);
+          const batch = createBatch(parsed.fileName, parsed.rows);
           newBatches.push(batch);
           combined.push(...batch.rows);
         }
@@ -396,10 +450,11 @@ export default function App() {
         setStatus(
           `Loaded ${files.length} file(s) → ${before} sessions → ${merged.length} unique across ${newBatches.length} period(s).`
         );
-        const times = merged.map((r) => parseSessionTime(r.time)).filter(Boolean) as Date[];
-        if (times.length) {
-          setRangeStartStr(setDatetimeLocalValue(new Date(Math.min(...times.map((d) => d.getTime())))));
-          setRangeEndStr(setDatetimeLocalValue(new Date(Math.max(...times.map((d) => d.getTime())))));
+        const sessionRange = sessionTimeRangeFromRows(merged);
+        if (sessionRange) {
+          setRangeStartStr(sessionRange.startStr);
+          setRangeEndStr(sessionRange.endStr);
+          setAppliedRange(sessionRange.applied);
         } else {
           setRangeStartStr("");
           setRangeEndStr("");
@@ -423,16 +478,10 @@ export default function App() {
         const addedHtmlSources: { name: string; text: string }[] = [];
         for (let i = 0; i < files.length; i++) {
           const file = files[i];
-          const name = (file.name || "").toLowerCase();
-          const isHtml = name.endsWith(".html") || file.type === "text/html";
           const text = await readFileAsText(file);
-          if (isHtml) addedHtmlSources.push({ name: file.name, text });
-          const rows = isHtml
-            ? normalizeRowsFromHtml(text)
-            : normalizeRowsFromCsv(
-                Papa.parse<Record<string, string>>(text, { header: true, skipEmptyLines: true }).data
-              );
-          const batch = createBatch(file.name, rows);
+          const parsed = parseFileContent(file.name, text);
+          if (parsed.htmlSource) addedHtmlSources.push(parsed.htmlSource);
+          const batch = createBatch(parsed.fileName, parsed.rows);
           addedBatches.push(batch);
           addedRows.push(...batch.rows);
         }
@@ -447,10 +496,11 @@ export default function App() {
   }, []);
 
   const applyRange = useCallback(() => {
-    setAppliedRange({
-      start: rangeStartStr ? new Date(rangeStartStr) : null,
-      end: rangeEndStr ? new Date(rangeEndStr) : null,
-    });
+    const startStr = rangeStartRef.current?.value ?? rangeStartStr;
+    const endStr = rangeEndRef.current?.value ?? rangeEndStr;
+    if (startStr !== rangeStartStr) setRangeStartStr(startStr);
+    if (endStr !== rangeEndStr) setRangeEndStr(endStr);
+    setAppliedRange(appliedRangeFromStrings(startStr, endStr));
   }, [rangeStartStr, rangeEndStr]);
 
   const clearRange = useCallback(() => {
@@ -463,26 +513,29 @@ export default function App() {
     setTagFilter((f) => ({ ...f, qaTags: toggleInList(f.qaTags, tag) }));
   }, []);
 
-  const toggleDiscoveryTag = useCallback((tag: string) => {
-    setTagFilter((f) => ({ ...f, discoveryTags: toggleInList(f.discoveryTags, tag) }));
+  const toggleCategoryTag = useCallback((tag: string) => {
+    setTagFilter((f) => ({ ...f, categoryTags: toggleInList(f.categoryTags, tag) }));
   }, []);
 
   const clearTagFilter = useCallback(() => {
-    setTagFilter((f) => ({ ...f, qaTags: [], discoveryTags: [] }));
+    setTagFilter((f) => ({ ...f, qaTags: [], categoryTags: [] }));
   }, []);
 
-  const openTimeline = useCallback((tag: string, kind: TagKind) => {
+  const openTimeline = useCallback((tag: string, kind: PickableTagKind) => {
     setTimelineFocusTag({ tag, kind });
     setActiveTab("timeline");
   }, []);
 
   const hasData = rawRows.length > 0;
-  const activeFilterCount = tagFilter.qaTags.length + tagFilter.discoveryTags.length;
+  const activeFilterCount = tagFilter.qaTags.length + tagFilter.categoryTags.length;
+
+  const discoveryPoolLabel = excludeErrors ? "all sessions (errors excluded)" : "all sessions";
 
   const tabs: { id: TabId; label: string; desc: string; badge?: string }[] = [
     { id: "overview", label: "Overview", desc: "KPIs, charts & sessions" },
-    { id: "timeline", label: "Timeline", desc: "Pick a tag → day-wise % trend", badge: batches.length > 1 ? `${batches.length} days` : undefined },
+    { id: "timeline", label: "Timeline", desc: "Pick a tag → day-wise % trend", badge: rangeBatches.length > 1 ? `${rangeBatches.length} days` : undefined },
     { id: "funnel", label: "Funnel", desc: "Narrow by tags & categories" },
+    { id: "discovery", label: "Discovery tags", desc: "Occurrence & share of pool" },
     { id: "htmlviewer", label: "Report viewer", desc: "Browse large report HTML, paginated" },
   ];
 
@@ -494,6 +547,7 @@ export default function App() {
           Upload rating report HTML or CSV files — one per day works best for timeline charts.
           Sessions are tagged with <strong>{LABELS.tags.toLowerCase()}</strong> (issues) and{" "}
           <strong>{LABELS.categories.toLowerCase()}</strong> (conversation types).
+          See the <strong>{LABELS.discoveryTags}</strong> tab for subject/topic labels.
         </p>
       </header>
       <main>
@@ -586,10 +640,10 @@ export default function App() {
                     <div className="label">Avg overall (filtered)</div>
                     <div className="value">{stats.avgOverall}</div>
                   </div>
-                  {batches.length > 1 ? (
+                  {rangeBatches.length > 1 ? (
                     <div className="kpi accent">
                       <div className="label">Timeline periods</div>
-                      <div className="value">{batches.length}</div>
+                      <div className="value">{rangeBatches.length}</div>
                     </div>
                   ) : null}
                 </div>
@@ -597,11 +651,21 @@ export default function App() {
                 <div className="filters">
                   <label>
                     Start (session time)
-                    <input type="datetime-local" value={rangeStartStr} onChange={(e) => setRangeStartStr(e.target.value)} />
+                    <input
+                      ref={rangeStartRef}
+                      type="datetime-local"
+                      value={rangeStartStr}
+                      onChange={(e) => setRangeStartStr(e.target.value)}
+                    />
                   </label>
                   <label>
                     End (session time)
-                    <input type="datetime-local" value={rangeEndStr} onChange={(e) => setRangeEndStr(e.target.value)} />
+                    <input
+                      ref={rangeEndRef}
+                      type="datetime-local"
+                      value={rangeEndStr}
+                      onChange={(e) => setRangeEndStr(e.target.value)}
+                    />
                   </label>
                   <button type="button" onClick={applyRange}>
                     Apply range
@@ -671,12 +735,12 @@ export default function App() {
                     </span>
                     {(tagFilter.funnelOrder === "categories-first"
                       ? [
-                          ...tagFilter.discoveryTags.map((t) => ({ t, kind: "category" as const })),
+                          ...tagFilter.categoryTags.map((t) => ({ t, kind: "category" as const })),
                           ...tagFilter.qaTags.map((t) => ({ t, kind: "tag" as const })),
                         ]
                       : [
                           ...tagFilter.qaTags.map((t) => ({ t, kind: "tag" as const })),
-                          ...tagFilter.discoveryTags.map((t) => ({ t, kind: "category" as const })),
+                          ...tagFilter.categoryTags.map((t) => ({ t, kind: "category" as const })),
                         ]
                     ).map(({ t, kind }, i) => (
                       <span key={`${kind}-${t}`} className={`filter-pill ${kind}`}>
@@ -688,7 +752,7 @@ export default function App() {
                         <button
                           type="button"
                           onClick={() =>
-                            kind === "category" ? toggleDiscoveryTag(t) : toggleQaTag(t)
+                            kind === "category" ? toggleCategoryTag(t) : toggleQaTag(t)
                           }
                           aria-label={`Remove ${t}`}
                         >
@@ -735,7 +799,7 @@ export default function App() {
                       {LABELS.categories}
                       <span className="sub">% of filtered pool (top 12)</span>
                     </h2>
-                    <Bar data={discoveryChartData} options={tagsBarOptions} plugins={[pctBarLabelPlugin]} />
+                    <Bar data={categoryChartData} options={tagsBarOptions} plugins={[pctBarLabelPlugin]} />
                   </div>
                 </div>
 
@@ -752,12 +816,12 @@ export default function App() {
                   />
                   <TagStatsTable
                     title={`${LABELS.categories} — occurrence`}
-                    rows={computeExclusiveTagStats(analyticsPool, "discovery", stats.total)}
+                    rows={computeExclusiveTagStats(analyticsPool, "category", stats.total)}
                     poolLabel={stats.poolLabel}
-                    selected={tagFilter.discoveryTags}
-                    onToggle={toggleDiscoveryTag}
+                    selected={tagFilter.categoryTags}
+                    onToggle={toggleCategoryTag}
                     onTimeline={openTimeline}
-                    kind="discovery"
+                    kind="category"
                     showTimeline={showTimeline}
                   />
                 </div>
@@ -809,14 +873,14 @@ export default function App() {
                               </td>
                               <td>
                                 <div className="mini-tags">
-                                  {r.discoveryTags.map((t) => (
+                                  {r.categoryTags.map((t) => (
                                     <span
                                       key={t}
-                                      className={`mini-tag discovery ${tagFilter.discoveryTags.includes(t) ? "hit" : ""}`}
-                                      onClick={() => toggleDiscoveryTag(t)}
+                                      className={`mini-tag category ${tagFilter.categoryTags.includes(t) ? "hit" : ""}`}
+                                      onClick={() => toggleCategoryTag(t)}
                                       role="button"
                                       tabIndex={0}
-                                      onKeyDown={(e) => e.key === "Enter" && toggleDiscoveryTag(t)}
+                                      onKeyDown={(e) => e.key === "Enter" && toggleCategoryTag(t)}
                                     >
                                       {t}
                                     </span>
@@ -848,6 +912,14 @@ export default function App() {
                 tagFilter={tagFilter}
                 onUpdateFilter={setTagFilter}
                 poolLabel={stats.poolLabel}
+              />
+            ) : null}
+
+            {activeTab === "discovery" ? (
+              <DiscoveryTagsTab
+                pool={baseRows}
+                totalCount={stats.total}
+                poolLabel={discoveryPoolLabel}
               />
             ) : null}
             </div>

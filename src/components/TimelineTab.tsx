@@ -18,14 +18,17 @@ import {
   topTagsAcrossBatches,
 } from "../analytics";
 import { CHART, timelineChartOptions } from "../chartTheme";
-import { LABELS } from "../labels";
-import type { LoadedBatch, TagKind } from "../parsing";
+import { LABELS, kindLabel } from "../labels";
+import type { LoadedBatch, PickableTagKind } from "../parsing";
+import { pickTagsByKind } from "../parsing";
 import {
   BUILTIN_RELEASE_DEFINITIONS,
   builtinReleaseIdFromMarkerId,
   createReleaseMarker,
+  isResolvableReleaseMarker,
   loadHiddenBuiltinReleaseIds,
   loadManualReleaseMarkers,
+  pruneInvalidManualReleaseMarkers,
   resolveReleaseMarkers,
   saveHiddenBuiltinReleaseIds,
   saveManualReleaseMarkers,
@@ -45,11 +48,11 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarEleme
 
 type ChartView = "line" | "bar";
 
-type CompareTag = { tag: string; kind: TagKind };
+type CompareTag = { tag: string; kind: PickableTagKind };
 
 const OVERLAY_COLORS = CHART.colors.filter((c) => c !== CHART.accent && c !== "#7c3aed");
 
-function compareKey(tag: string, kind: TagKind): string {
+function compareKey(tag: string, kind: PickableTagKind): string {
   return `${kind}:${tag}`;
 }
 
@@ -57,18 +60,18 @@ function compareColor(index: number): string {
   return OVERLAY_COLORS[index % OVERLAY_COLORS.length];
 }
 
-function colorForTagKind(kind: TagKind): string {
-  return kind === "discovery" ? "#7c3aed" : CHART.accent;
+function colorForTagKind(kind: PickableTagKind): string {
+  return kind === "category" ? "#7c3aed" : CHART.accent;
 }
 
-function kindShortLabel(kind: TagKind): string {
-  return kind === "discovery" ? LABELS.categories : LABELS.tags;
+function kindShortLabel(kind: PickableTagKind): string {
+  return kindLabel(kind);
 }
 
 type TimelineTabProps = {
   batches: LoadedBatch[];
   lowScoreOnly: boolean;
-  initialTag?: { tag: string; kind: TagKind } | null;
+  initialTag?: { tag: string; kind: PickableTagKind } | null;
 };
 
 function deltaArrow(delta: number): string {
@@ -81,9 +84,7 @@ export function TimelineTab({
   lowScoreOnly,
   initialTag,
 }: TimelineTabProps) {
-  const [tagKind, setTagKind] = useState<"qa" | "discovery">(
-    initialTag?.kind === "discovery" ? "discovery" : "qa"
-  );
+  const [tagKind, setTagKind] = useState<PickableTagKind>(initialTag?.kind ?? "qa");
   const [selectedTag, setSelectedTag] = useState<string | null>(initialTag?.tag ?? null);
   const [tagSearch, setTagSearch] = useState("");
   const [tagPickerOpen, setTagPickerOpen] = useState(false);
@@ -104,7 +105,7 @@ export function TimelineTab({
   const [compareTags, setCompareTags] = useState<CompareTag[]>([]);
   const [comparePickerOpen, setComparePickerOpen] = useState(false);
   const [compareSearch, setCompareSearch] = useState("");
-  const [compareKind, setCompareKind] = useState<"qa" | "discovery">("discovery");
+  const [compareKind, setCompareKind] = useState<PickableTagKind>("category");
   const pickerRef = useRef<HTMLDivElement>(null);
   const comparePickerRef = useRef<HTMLDivElement>(null);
 
@@ -131,12 +132,7 @@ export function TimelineTab({
   }, []);
 
   const tagStats = useMemo(
-    () =>
-      topTagsAcrossBatches(
-        batches,
-        tagKind === "qa" ? (r) => r.qaTags : (r) => r.discoveryTags,
-        lowScoreOnly
-      ),
+    () => topTagsAcrossBatches(batches, (r) => pickTagsByKind(r, tagKind), lowScoreOnly),
     [batches, tagKind, lowScoreOnly]
   );
 
@@ -147,12 +143,7 @@ export function TimelineTab({
   }, [tagStats, tagSearch]);
 
   const compareTagStats = useMemo(
-    () =>
-      topTagsAcrossBatches(
-        batches,
-        compareKind === "qa" ? (r) => r.qaTags : (r) => r.discoveryTags,
-        lowScoreOnly
-      ),
+    () => topTagsAcrossBatches(batches, (r) => pickTagsByKind(r, compareKind), lowScoreOnly),
     [batches, compareKind, lowScoreOnly]
   );
 
@@ -173,6 +164,14 @@ export function TimelineTab({
       ),
     [batches]
   );
+
+  useEffect(() => {
+    pruneInvalidManualReleaseMarkers(sortedBatches);
+    setManualReleaseMarkers((prev) => {
+      const valid = prev.filter((m) => isResolvableReleaseMarker(m, sortedBatches));
+      return valid.length === prev.length ? prev : valid;
+    });
+  }, [sortedBatches]);
 
   const releaseMarkers = useMemo(
     () => resolveReleaseMarkers(sortedBatches, manualReleaseMarkers, hiddenBuiltinIds),
@@ -205,7 +204,7 @@ export function TimelineTab({
   useEffect(() => {
     if (initialTag) {
       setSelectedTag(initialTag.tag);
-      setTagKind(initialTag.kind === "discovery" ? "discovery" : "qa");
+      setTagKind(initialTag.kind);
     }
   }, [initialTag]);
 
@@ -240,7 +239,7 @@ export function TimelineTab({
   }, [compareTags, sortedBatches, lowScoreOnly, timeline]);
 
   const seriesKindByLabel = useMemo(() => {
-    const map = new Map<string, TagKind>();
+    const map = new Map<string, PickableTagKind>();
     if (selectedTag) map.set(selectedTag, tagKind);
     for (const compare of compareTags) map.set(compare.tag, compare.kind);
     return map;
@@ -316,7 +315,7 @@ export function TimelineTab({
     setHiddenBuiltinIds((prev) => prev.filter((id) => id !== builtinId));
   };
 
-  const toggleCompareTag = (tag: string, kind: TagKind) => {
+  const toggleCompareTag = (tag: string, kind: PickableTagKind) => {
     const key = compareKey(tag, kind);
     setCompareTags((prev) => {
       const exists = prev.some((c) => compareKey(c.tag, c.kind) === key);
@@ -325,7 +324,7 @@ export function TimelineTab({
     });
   };
 
-  const removeCompareTag = (tag: string, kind: TagKind) => {
+  const removeCompareTag = (tag: string, kind: PickableTagKind) => {
     const key = compareKey(tag, kind);
     setCompareTags((prev) => prev.filter((c) => compareKey(c.tag, c.kind) !== key));
   };
@@ -404,7 +403,7 @@ export function TimelineTab({
     dataIndex: number,
     y: number | null,
     seriesTag: string,
-    seriesKind: TagKind
+    seriesKind: PickableTagKind
   ) => {
     if (y == null) return "";
     const point =
@@ -513,9 +512,9 @@ export function TimelineTab({
             </button>
             <button
               type="button"
-              className={tagKind === "discovery" ? "active" : ""}
+              className={tagKind === "category" ? "active" : ""}
               onClick={() => {
-                setTagKind("discovery");
+                setTagKind("category");
                 setSelectedTag(null);
               }}
             >
@@ -623,8 +622,8 @@ export function TimelineTab({
                       </button>
                       <button
                         type="button"
-                        className={compareKind === "discovery" ? "active" : ""}
-                        onClick={() => setCompareKind("discovery")}
+                        className={compareKind === "category" ? "active" : ""}
+                        onClick={() => setCompareKind("category")}
                       >
                         {LABELS.categories}
                       </button>
@@ -694,10 +693,15 @@ export function TimelineTab({
           </div>
           <button
             type="button"
-            className={`tl-config-btn ${showConfig ? "active" : ""}`}
+            className={`tl-config-btn ${showConfig ? "active" : ""} ${
+              releaseMarkers.length > 0 ? "has-markers" : ""
+            }`}
             onClick={() => setShowConfig((s) => !s)}
           >
             {showConfig ? "Hide releases" : "Releases"}
+            {releaseMarkers.length > 0 ? (
+              <span className="tl-config-btn-count">{releaseMarkers.length}</span>
+            ) : null}
           </button>
         </div>
       </div>
@@ -725,27 +729,30 @@ export function TimelineTab({
             </div>
 
             {releaseOverlays.length > 0 ? (
-              <div className="tl-metrics-releases">
-                {releaseOverlays.map((o) => (
-                  <button
-                    key={o.markerId}
-                    type="button"
-                    className={`tl-metric tl-metric-release ${o.direction} ${
-                      selectedReleaseId === o.markerId ? "selected" : ""
-                    }`}
-                    onClick={() => setSelectedReleaseId(o.markerId)}
-                    title={`Show significant changes for ${o.markerLabel}`}
-                  >
-                    <span className="tl-metric-value">
-                      {deltaArrow(o.deltaPct)}
-                      {Math.abs(o.deltaPct).toFixed(1)}
-                      <span className="tl-metric-unit">pp</span>
-                    </span>
-                    <span className="tl-metric-label">
-                      {o.markerLabel} · {o.beforeAvg.toFixed(1)}% → {o.afterAvg.toFixed(1)}%
-                    </span>
-                  </button>
-                ))}
+              <div className="tl-metrics-releases-wrap">
+                <span className="tl-metrics-releases-heading">Release impact</span>
+                <div className="tl-metrics-releases">
+                  {releaseOverlays.map((o) => (
+                    <button
+                      key={o.markerId}
+                      type="button"
+                      className={`tl-metric tl-metric-release ${o.direction} ${
+                        selectedReleaseId === o.markerId ? "selected" : ""
+                      }`}
+                      onClick={() => setSelectedReleaseId(o.markerId)}
+                      title={`Show significant changes for ${o.markerLabel}`}
+                    >
+                      <span className="tl-metric-value">
+                        {deltaArrow(o.deltaPct)}
+                        {Math.abs(o.deltaPct).toFixed(1)}
+                        <span className="tl-metric-unit">pp</span>
+                      </span>
+                      <span className="tl-metric-label">
+                        {o.markerLabel} · {o.beforeAvg.toFixed(1)}% → {o.afterAvg.toFixed(1)}%
+                      </span>
+                    </button>
+                  ))}
+                </div>
               </div>
             ) : null}
           </div>

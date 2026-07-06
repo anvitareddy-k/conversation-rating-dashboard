@@ -1,9 +1,6 @@
 import { kindLabel, type TagOrCategoryKind } from "../labels";
 
 export function KindBadge({ kind }: { kind: TagOrCategoryKind }) {
-  return (
-    <span className={`kind-badge ${kind === "discovery" ? "category" : "tag"}`}>
-      {kindLabel(kind)}
-    </span>
-  );
+  const cls = kind === "category" ? "category" : "tag";
+  return <span className={`kind-badge ${cls}`}>{kindLabel(kind)}</span>;
 }

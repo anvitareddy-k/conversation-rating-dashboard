@@ -65,19 +65,30 @@ const DISCOVERY_TAG_DESCRIPTIONS: Record<string, string> = {
     "User wants a plain conversational answer instead of slotfill/template output.",
 };
 
+/** Fixed conversation-category labels from the rating prompt (not subject/topic discovery). */
+export const CATEGORY_TAG_VOCABULARY: ReadonlySet<string> = new Set(
+  Object.keys(DISCOVERY_TAG_DESCRIPTIONS)
+);
+
+export function isCategoryVocabularyTag(tag: string): boolean {
+  return CATEGORY_TAG_VOCABULARY.has(tag.trim());
+}
+
 export function getTagDescription(tag: string, kind: TagKind): string | null {
   const t = tag.trim();
   if (!t) return null;
   if (kind === "qa") return QA_TAG_DESCRIPTIONS[t] ?? null;
-  if (kind === "discovery") return DISCOVERY_TAG_DESCRIPTIONS[t] ?? null;
+  if (kind === "discovery" || kind === "category") return DISCOVERY_TAG_DESCRIPTIONS[t] ?? null;
   return null;
 }
 
 export function getTagDescriptionOrDefault(tag: string, kind: TagKind): string {
   return (
     getTagDescription(tag, kind) ??
-    (kind === "discovery"
+    (kind === "category"
       ? "Conversation category label from the rating prompt."
-      : "QA issue tag from the rating prompt.")
+      : kind === "discovery"
+        ? "Discovery tag from the rating prompt."
+        : "QA issue tag from the rating prompt.")
   );
 }

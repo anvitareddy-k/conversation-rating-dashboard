@@ -14,12 +14,13 @@ import { Line, Bar } from "react-chartjs-2";
 import { computeTagTimeline } from "../analytics";
 import { kindLabel } from "../labels";
 import { barLineOptions, CHART } from "../chartTheme";
-import type { LoadedBatch, TagKind } from "../parsing";
+import type { LoadedBatch, PickableTagKind, TagKind } from "../parsing";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Legend, Filler);
 
-const KIND_COLOR: Record<TagKind, string> = {
+const KIND_COLOR: Partial<Record<TagKind, string>> = {
   qa: CHART.accent,
+  category: "#8e44ad",
   discovery: "#7c3aed",
   structural: "#ea580c",
 };
@@ -27,11 +28,11 @@ const KIND_COLOR: Record<TagKind, string> = {
 type SidePanelProps = {
   open: boolean;
   tag: string | null;
-  kind: TagKind | null;
+  kind: PickableTagKind | null;
   batches: LoadedBatch[];
   lowScoreOnly: boolean;
   onClose: () => void;
-  onAddToFunnel?: (tag: string, kind: TagKind) => void;
+  onAddToFunnel?: (tag: string, kind: PickableTagKind) => void;
 };
 
 export function SidePanel({
@@ -58,7 +59,7 @@ export function SidePanel({
     return { delta, latest, prev };
   }, [timeline]);
 
-  const color = kind ? KIND_COLOR[kind] : CHART.accent;
+  const color = kind ? (KIND_COLOR[kind] ?? CHART.accent) : CHART.accent;
 
   const pctChartData = useMemo(
     () => ({
