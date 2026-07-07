@@ -20,7 +20,7 @@ export function saveChangePointBatchId(batchId: string | null): void {
   }
 }
 
-/** Default split index: first valid interior day (needs before + after). */
+/** Default split index: first valid interior release marker batch only. */
 export function defaultChangePointBatchId(
   sortedBatchIds: string[],
   releaseMarkerBatchIds: string[] = []
@@ -30,8 +30,7 @@ export function defaultChangePointBatchId(
     const idx = sortedBatchIds.indexOf(batchId);
     if (idx > 0 && idx < sortedBatchIds.length) return batchId;
   }
-  const mid = Math.floor(sortedBatchIds.length / 2);
-  return sortedBatchIds[mid] ?? null;
+  return null;
 }
 
 export function resolveChangePointBatchId(
@@ -39,6 +38,9 @@ export function resolveChangePointBatchId(
   saved: string | null,
   releaseMarkerBatchIds: string[] = []
 ): string | null {
+  // Release markers define the compare split — no separate change point.
+  if (releaseMarkerBatchIds.length > 0) return null;
+
   if (saved && sortedBatchIds.includes(saved)) {
     const idx = sortedBatchIds.indexOf(saved);
     if (idx > 0 && idx < sortedBatchIds.length) return saved;

@@ -149,7 +149,7 @@ function TagStatsTable({
         <KindBadge kind={kind} />
       </div>
       <p className="muted-inline">
-        Click to filter sessions{showTimeline ? " · Trend for day-wise chart" : ""}. Pool: {poolLabel}.
+        Click to filter sessions{showTimeline ? " · Trend by day included" : ""}. Pool: {poolLabel}.
       </p>
       <div className="tag-chip-grid">
         {rows.map((row) => (
@@ -448,7 +448,7 @@ export default function App() {
         setTagFilter(defaultTagFilter());
         setTimelineFocusTag(null);
         setStatus(
-          `Loaded ${files.length} file(s) → ${before} sessions → ${merged.length} unique across ${newBatches.length} period(s).`
+          `Loaded ${files.length} file(s) → ${before} sessions → ${merged.length} unique across ${newBatches.length} day(s) included.`
         );
         const sessionRange = sessionTimeRangeFromRows(merged);
         if (sessionRange) {
@@ -488,7 +488,7 @@ export default function App() {
         setHtmlSources((prev) => [...prev, ...addedHtmlSources]);
         setBatches((prev) => [...prev, ...addedBatches]);
         setRawRows((prev) => mergeAndDedupeByChatbotSid([...prev, ...addedRows]));
-        setStatus(`Added ${files.length} file(s) · ${addedBatches.length} new period(s).`);
+        setStatus(`Added ${files.length} file(s) · ${addedBatches.length} new day(s) included.`);
       } catch (err) {
         setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -533,7 +533,7 @@ export default function App() {
 
   const tabs: { id: TabId; label: string; desc: string; badge?: string }[] = [
     { id: "overview", label: "Overview", desc: "KPIs, charts & sessions" },
-    { id: "timeline", label: "Timeline", desc: "Pick a tag → day-wise % trend", badge: rangeBatches.length > 1 ? `${rangeBatches.length} days` : undefined },
+    { id: "timeline", label: "Timeline", desc: "Pick a tag → % trend by day", badge: rangeBatches.length > 1 ? `${rangeBatches.length} days` : undefined },
     { id: "funnel", label: "Funnel", desc: "Narrow by tags & categories" },
     { id: "discovery", label: "Discovery tags", desc: "Occurrence & share of pool" },
     { id: "htmlviewer", label: "Report viewer", desc: "Browse large report HTML, paginated" },
@@ -544,7 +544,7 @@ export default function App() {
       <header>
         <h1>Conversation rating dashboard</h1>
         <p>
-          Upload rating report HTML or CSV files — one per day works best for timeline charts.
+          Upload rating report HTML or CSV files — one file per day works best for trend charts.
           Sessions are tagged with <strong>{LABELS.tags.toLowerCase()}</strong> (issues) and{" "}
           <strong>{LABELS.categories.toLowerCase()}</strong> (conversation types).
           See the <strong>{LABELS.discoveryTags}</strong> tab for subject/topic labels.
@@ -559,13 +559,13 @@ export default function App() {
           {hasData ? (
             <>
               <label className="file-btn secondary" htmlFor="append-input">
-                Add more periods
+                Add more days
               </label>
               <input id="append-input" type="file" accept=".csv,.html,text/html,text/csv" multiple onChange={appendFiles} />
             </>
           ) : null}
           <p className="hint">
-            Tip: upload one file per calendar day or rating run — each file becomes a timeline period.
+            Tip: upload one file per calendar day — each file is one day included on the timeline.
           </p>
           <div className={`warn-banner ${showHtmlWarn ? "visible" : ""}`}>
             Large HTML files can make the tab hang briefly while parsing.
@@ -576,7 +576,7 @@ export default function App() {
         {batches.length > 0 ? (
           <div className="batch-summary-bar">
             <span>
-              <strong>{batchSummary.batchCount}</strong> period(s) ·{" "}
+              <strong>{batchSummary.batchCount}</strong> day(s) included ·{" "}
               <strong>{batchSummary.totalSessions}</strong> total sessions
             </span>
             {batchSummary.periodRange !== "—" ? (
@@ -608,21 +608,29 @@ export default function App() {
           </div>
         ) : hasData ? (
           <>
-            <div className="global-filters-bar">
-              <label className="checkbox-inline">
-                <input
-                  type="checkbox"
-                  checked={excludeErrors}
-                  onChange={(e) => setExcludeErrors(e.target.checked)}
-                />
-                Exclude sessions tagged <strong>Error</strong> (failed LLM rating)
-              </label>
-              {excludeErrors && errorSessionCount > 0 ? (
-                <span className="global-filter-note">
-                  {errorSessionCount} session{errorSessionCount === 1 ? "" : "s"} hidden across all tabs
-                </span>
-              ) : null}
-            </div>
+            <details className="collapse-table-drawer global-filters-drawer">
+              <summary>
+                Data filters
+                {excludeErrors && errorSessionCount > 0
+                  ? ` · ${errorSessionCount.toLocaleString()} error session${errorSessionCount === 1 ? "" : "s"} excluded`
+                  : ""}
+              </summary>
+              <div className="global-filters-drawer-body">
+                <label className="checkbox-inline">
+                  <input
+                    type="checkbox"
+                    checked={excludeErrors}
+                    onChange={(e) => setExcludeErrors(e.target.checked)}
+                  />
+                  Exclude sessions tagged <strong>Error</strong> (failed LLM rating)
+                </label>
+                {excludeErrors && errorSessionCount > 0 ? (
+                  <span className="global-filter-note">
+                    {errorSessionCount.toLocaleString()} session{errorSessionCount === 1 ? "" : "s"} hidden across all tabs
+                  </span>
+                ) : null}
+              </div>
+            </details>
 
             <div className="tab-content">
             {activeTab === "overview" ? (
@@ -637,12 +645,12 @@ export default function App() {
                     <div className="value">{stats.funnelN}</div>
                   </div>
                   <div className="kpi ok">
-                    <div className="label">Avg overall (filtered)</div>
+                    <div className="label">Avg rated ≤ 5 score</div>
                     <div className="value">{stats.avgOverall}</div>
                   </div>
                   {rangeBatches.length > 1 ? (
                     <div className="kpi accent">
-                      <div className="label">Timeline periods</div>
+                      <div className="label">Days included</div>
                       <div className="value">{rangeBatches.length}</div>
                     </div>
                   ) : null}
@@ -781,8 +789,6 @@ export default function App() {
                     batches={workingBatches}
                     releaseMarkers={releaseMarkers}
                     compact={workingBatches.length === 1}
-                    changePointBatchId={changePointBatchId}
-                    onSelectChangePoint={setChangePointBatchId}
                   />
                 ) : null}
 

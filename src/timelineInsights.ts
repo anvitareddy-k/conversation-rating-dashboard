@@ -307,7 +307,7 @@ export function computeTimelineInsights(
   const windows: TimelineInsightWindow[] = [];
   const batchIndex = new Map(sortedBatches.map((b, i) => [b.id, i]));
 
-  if (changePointBatchId) {
+  if (changePointBatchId && releaseMarkers.length === 0) {
     const idx = batchIndex.get(changePointBatchId);
     if (idx != null) {
       const period = sortedBatches[idx];
@@ -365,7 +365,7 @@ export function computeTimelineInsights(
 
   let selectedTagShifts: TimelineTagShift[] = [];
   if (selectedTag && sortedBatches.length >= 2) {
-    if (changePointBatchId) {
+    if (changePointBatchId && releaseMarkers.length === 0) {
       const idx = batchIndex.get(changePointBatchId);
       if (idx != null) {
         const shift = buildTagShift(

@@ -5,6 +5,7 @@ import { LABELS } from "../labels";
 import { KindBadge } from "./KindBadge";
 import type { FunnelOrder, PickableTagKind, RatingRow, TagFilterState, TagStatRow } from "../parsing";
 import { computeTagStats } from "../parsing";
+import { tarsSidUrl } from "../tars";
 
 type FunnelTabProps = {
   pool: RatingRow[];
@@ -218,13 +219,28 @@ function FunnelSessionsPanel({ rows }: { rows: RatingRow[] }) {
               <th>Score</th>
               <th>{LABELS.categories}</th>
               <th>{LABELS.tags}</th>
-              <th>Time</th>
+              <th>Turns</th>
             </tr>
           </thead>
           <tbody>
-            {displayRows.map((r) => (
-              <tr key={r.chatbot_sid || `${r.time}-${r.overall_score}`}>
-                <td className="mono">{r.chatbot_sid || "—"}</td>
+            {displayRows.map((r) => {
+              const sid = r.chatbot_sid?.trim();
+              return (
+              <tr key={sid || `${r.time}-${r.overall_score}`}>
+                <td className="mono">
+                  {sid ? (
+                    <a
+                      href={tarsSidUrl(sid)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Open in TARS"
+                    >
+                      {sid}
+                    </a>
+                  ) : (
+                    "—"
+                  )}
+                </td>
                 <td>{Number.isFinite(r.overall_score) ? r.overall_score.toFixed(2) : "—"}</td>
                 <td>
                   <div className="mini-tags">
@@ -244,9 +260,12 @@ function FunnelSessionsPanel({ rows }: { rows: RatingRow[] }) {
                     ))}
                   </div>
                 </td>
-                <td className="time-cell">{r.time || "—"}</td>
+                <td className="time-cell">
+                  {r.num_turns != null && Number.isFinite(r.num_turns) ? r.num_turns : "—"}
+                </td>
               </tr>
-            ))}
+            );
+            })}
           </tbody>
         </table>
       </div>

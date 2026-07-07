@@ -136,16 +136,12 @@ type LowRatedDailyChartProps = {
   batches: LoadedBatch[];
   releaseMarkers?: ReleaseMarker[];
   compact?: boolean;
-  changePointBatchId?: string | null;
-  onSelectChangePoint?: (batchId: string) => void;
 };
 
 export function LowRatedDailyChart({
   batches,
   releaseMarkers = [],
   compact = false,
-  changePointBatchId = null,
-  onSelectChangePoint,
 }: LowRatedDailyChartProps) {
   const [drillBatchId, setDrillBatchId] = useState<string | null>(null);
 
@@ -187,45 +183,10 @@ export function LowRatedDailyChart({
     [series]
   );
 
-  const overlays = useMemo(() => {
-    const release = computeTimelineReleaseOverlays(fakeTimeline, releaseMarkers);
-    if (!changePointBatchId || drillBatchId) return release;
-    if (releaseMarkers.some((m) => m.batchId === changePointBatchId)) return release;
-
-    const idx = fakeTimeline.findIndex((p) => p.batchId === changePointBatchId);
-    if (idx <= 0 || idx >= fakeTimeline.length) return release;
-
-    const beforePoints = fakeTimeline.slice(0, idx);
-    const afterPoints = fakeTimeline.slice(idx);
-    const beforeAvg =
-      beforePoints.length > 0
-        ? beforePoints.reduce((sum, p) => sum + p.pct, 0) / beforePoints.length
-        : null;
-    const afterAvg =
-      afterPoints.length > 0
-        ? afterPoints.reduce((sum, p) => sum + p.pct, 0) / afterPoints.length
-        : null;
-    if (beforeAvg == null || afterAvg == null) return release;
-
-    const deltaPct = afterAvg - beforeAvg;
-    return [
-      ...release,
-      {
-        markerId: "change-point",
-        markerLabel: "Compare from",
-        batchId: changePointBatchId,
-        periodLabel: fakeTimeline[idx].label,
-        index: idx,
-        beforePeriods: beforePoints.length,
-        afterPeriods: afterPoints.length,
-        beforeAvg,
-        afterAvg,
-        deltaPct,
-        direction:
-          Math.abs(deltaPct) < 0.05 ? ("flat" as const) : deltaPct > 0 ? ("up" as const) : ("down" as const),
-      },
-    ];
-  }, [fakeTimeline, releaseMarkers, changePointBatchId, drillBatchId]);
+  const overlays = useMemo(
+    () => computeTimelineReleaseOverlays(fakeTimeline, releaseMarkers),
+    [fakeTimeline, releaseMarkers]
+  );
 
   const markerPlugin = useMemo(() => createReleaseMarkerPlugin(overlays), [overlays]);
 
@@ -245,44 +206,33 @@ export function LowRatedDailyChart({
     [series, stackBucketIds]
   );
 
-  const activeDrillBands = useMemo(() => {
-    if (!drillBands) return [] as LowScoreBandId[];
-    return LOW_SCORE_BAND_ORDER.filter((id) => drillBands[id] > 0);
-  }, [drillBands]);
-
   const drillChartData = useMemo(() => {
-    if (!drillBands || !activeDrillBands.length) return null;
+    if (!drillBands) return null;
     return {
-      labels: activeDrillBands.map((id) => LOW_SCORE_BAND_LABELS[id]),
+      labels: LOW_SCORE_BAND_ORDER.map((id) => LOW_SCORE_BAND_LABELS[id]),
       datasets: [
         {
           label: "Sessions",
-          data: activeDrillBands.map((id) => drillBands[id]),
-          backgroundColor: activeDrillBands.map((id) => BAND_COLORS[id]),
+          data: LOW_SCORE_BAND_ORDER.map((id) => drillBands[id]),
+          backgroundColor: LOW_SCORE_BAND_ORDER.map((id) => BAND_COLORS[id]),
           borderWidth: 0,
           borderRadius: 4,
           maxBarThickness: 56,
         },
       ],
     };
-  }, [drillBands, activeDrillBands]);
+  }, [drillBands]);
 
   const drillTopLabelPlugin = useMemo(
     () =>
       createBarTopLabelPlugin((index) => {
         if (!drillPoint || !drillBands) return null;
-        const bandId = activeDrillBands[index];
+        const bandId = LOW_SCORE_BAND_ORDER[index];
         if (!bandId) return null;
         const count = drillBands[bandId];
-        if (!count) return null;
         return `${pctOfLowRated(drillPoint, count).toFixed(0)}%`;
       }),
-    [drillPoint, drillBands, activeDrillBands]
-  );
-
-  const changePointIndex = useMemo(
-    () => (changePointBatchId ? series.findIndex((p) => p.batchId === changePointBatchId) : -1),
-    [series, changePointBatchId]
+    [drillPoint, drillBands]
   );
 
   const overviewOptions = useMemo(
@@ -290,19 +240,11 @@ export function LowRatedDailyChart({
       ...timelineChartOptions({ yFormat: (v) => String(v) }),
       maintainAspectRatio: false,
       layout: { padding: { top: overlays.length ? 32 : 26, right: 8, left: 4 } },
-      onClick: (evt: ChartEvent, elements: ActiveElement[]) => {
+      onClick: (_evt: ChartEvent, elements: ActiveElement[]) => {
         if (!elements.length) return;
         const { index } = elements[0];
         const point = series[index];
         if (!point) return;
-
-        const native = evt.native;
-        if (native instanceof MouseEvent && native.shiftKey && onSelectChangePoint) {
-          const canSplit = index > 0 && index < series.length;
-          if (canSplit) onSelectChangePoint(point.batchId);
-          return;
-        }
-
         if (lowRatedCount(point) > 0) setDrillBatchId(point.batchId);
       },
       plugins: {
@@ -340,11 +282,7 @@ export function LowRatedDailyChart({
                 `${pctOfTotal(point, low).toFixed(1)}% rated ≤5`,
               ];
               if (low > 0) {
-                lines.push(
-                  onSelectChangePoint
-                    ? "Click bar for score band breakdown · Shift+click to set compare split"
-                    : "Click bar for score band breakdown"
-                );
+                lines.push("Click bar for score band breakdown");
               }
               return lines;
             },
@@ -366,7 +304,7 @@ export function LowRatedDailyChart({
         },
       },
     }),
-    [series, overlays.length, onSelectChangePoint]
+    [series, overlays.length]
   );
 
   const drillOptions = useMemo(() => {
@@ -386,10 +324,9 @@ export function LowRatedDailyChart({
           callbacks: {
             title: () => drillPoint.label,
             label: (ctx: TooltipItem<"bar">) => {
-              const bandId = activeDrillBands[ctx.dataIndex];
+              const bandId = LOW_SCORE_BAND_ORDER[ctx.dataIndex];
               if (!bandId) return "";
               const count = drillBands[bandId];
-              if (!count) return "";
               const ofLow = pctOfLowRated(drillPoint, count);
               const ofDay = pctOfTotal(drillPoint, count);
               return [
@@ -415,7 +352,7 @@ export function LowRatedDailyChart({
         },
       },
     };
-  }, [drillPoint, drillBands, activeDrillBands]);
+  }, [drillPoint, drillBands]);
 
   if (!series.length) return null;
 
@@ -451,8 +388,7 @@ export function LowRatedDailyChart({
         <div>
           <h3 className="tl-pool-chart-title">Conversations by score</h3>
           <p className="tl-pool-chart-sub">
-            Stacked daily total · count on top · hover for % rated ≤5 · click bar for band breakdown
-            {onSelectChangePoint ? " · shift+click to set compare split" : ""}
+            Stacked total per day included · count on top · hover for % rated ≤5 · click bar for band breakdown
             {series.length > 1
               ? ` · latest ${latestLow}/${latest.totalCount} rated ≤5 (${pctOfTotal(latest, latestLow).toFixed(1)}%)`
               : ""}
@@ -469,12 +405,6 @@ export function LowRatedDailyChart({
           ]}
         />
       </div>
-      {changePointIndex > 0 ? (
-        <p className="tl-change-point-hint">
-          Comparing before <strong>{series[changePointIndex - 1]?.label}</strong> vs from{" "}
-          <strong>{series[changePointIndex]?.label}</strong> onward
-        </p>
-      ) : null}
     </div>
   );
 }

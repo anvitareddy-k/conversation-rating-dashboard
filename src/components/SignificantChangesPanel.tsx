@@ -222,7 +222,6 @@ function resolveActiveWindow(
 
     return (
       chartWindows.find((w) => w.scope === "release") ??
-      chartWindows.find((w) => w.scope === "change_point") ??
       chartWindows[0] ??
       null
     );

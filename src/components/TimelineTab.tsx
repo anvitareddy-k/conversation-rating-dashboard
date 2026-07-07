@@ -256,7 +256,7 @@ export function TimelineTab({
   const timelineAvgTitle = useMemo(() => {
     if (timelineAvg == null || !selectedTag) return "";
     const dayWord = timeline.length === 1 ? "day" : "days";
-    return `Average daily % across ${timeline.length} ${dayWord} on the chart (${poolLabel}). Not the latest day alone.`;
+    return `Average % across ${timeline.length} ${dayWord} included on the chart (${poolLabel}). Not the latest day alone.`;
   }, [timelineAvg, selectedTag, timeline.length, poolLabel]);
 
   const releaseOverlays = useMemo(
@@ -492,7 +492,7 @@ export function TimelineTab({
   );
 
   if (batches.length === 0) {
-    return <div className="tl-empty">Upload daily rating files to explore trends over time.</div>;
+    return <div className="tl-empty">Upload daily rating files to explore trends across days included.</div>;
   }
 
   return (
@@ -723,7 +723,7 @@ export function TimelineTab({
                   title={timelineAvgTitle || getTagDescriptionOrDefault(selectedTag, tagKind)}
                 >
                   {selectedTag} · average
-                  {timeline.length > 0 ? ` · ${timeline.length}d` : ""} · {poolLabel}
+                  {timeline.length > 0 ? ` · ${timeline.length} day${timeline.length === 1 ? "" : "s"} included` : ""} · {poolLabel}
                 </span>
               </div>
             </div>
@@ -771,12 +771,12 @@ export function TimelineTab({
                 over time
               </h3>
               <p className="tl-pool-chart-sub">
-                % of conversations tagged each day
+                % of conversations tagged each day included
                 {compareTags.length > 0 ? " · dashed lines = comparisons" : ""}
               </p>
             </div>
             {timeline.length <= 1 ? (
-              <p className="tl-chart-hint">Add more daily files to see a trend.</p>
+              <p className="tl-chart-hint">Add more days of data to see a trend.</p>
             ) : null}
             <div className="tl-chart-canvas">
               {chartView === "bar" ? (
