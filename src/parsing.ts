@@ -67,9 +67,27 @@ export function parseSessionTime(str: string | undefined): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+/** Display session time in the viewer's local timezone (ISO `Z` times otherwise look UTC). */
+export function formatSessionTime(str: string | undefined): string {
+  const d = parseSessionTime(str);
+  if (!d) {
+    const raw = str == null ? "" : String(str).trim();
+    return raw || "—";
+  }
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 export function rowInRange(row: RatingRow, start: Date | null, end: Date | null): boolean {
   const t = parseSessionTime(row.time);
-  if (!t) return true;
+  // Unparseable times cannot be matched to a range — exclude when a range is active.
+  if (!t) return start === null && end === null;
   if (start && t < start) return false;
   if (end && t > end) return false;
   return true;
@@ -81,20 +99,39 @@ export function filterRows(rows: RatingRow[], start: Date | null, end: Date | nu
 
 export type AppliedTimeRange = { start: Date | null; end: Date | null };
 
-/** Parse `datetime-local` value as range start (minute precision). */
-export function parseDatetimeLocalStart(value: string): Date | null {
+/**
+ * Parse a `datetime-local` value (`YYYY-MM-DDTHH:mm`) as a local wall-clock Date.
+ * Avoid `new Date(isoWithoutZ)`, which is inconsistent across engines.
+ */
+function parseDatetimeLocalValue(value: string): Date | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
-  const d = new Date(trimmed);
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/.exec(trimmed);
+  if (!m) {
+    const d = new Date(trimmed);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const d = new Date(
+    Number(m[1]),
+    Number(m[2]) - 1,
+    Number(m[3]),
+    Number(m[4]),
+    Number(m[5]),
+    m[6] != null ? Number(m[6]) : 0,
+    0
+  );
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** Parse `datetime-local` value as range start (minute precision). */
+export function parseDatetimeLocalStart(value: string): Date | null {
+  return parseDatetimeLocalValue(value);
 }
 
 /** Parse `datetime-local` value as inclusive range end (covers the full selected minute). */
 export function parseDatetimeLocalEnd(value: string): Date | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const d = new Date(trimmed);
-  if (Number.isNaN(d.getTime())) return null;
+  const d = parseDatetimeLocalValue(value);
+  if (!d) return null;
   return new Date(d.getTime() + 59_999);
 }
 

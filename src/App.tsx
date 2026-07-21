@@ -16,6 +16,7 @@ import {
   filterRowsByTags,
   filterBatchesByRange,
   appliedRangeFromStrings,
+  formatSessionTime,
   sessionTimeRangeFromRows,
   computeExclusiveTagStats,
   excludeErrorSessions,
@@ -658,7 +659,7 @@ export default function App() {
 
                 <div className="filters">
                   <label>
-                    Start (session time)
+                    Start (local time)
                     <input
                       ref={rangeStartRef}
                       type="datetime-local"
@@ -667,7 +668,7 @@ export default function App() {
                     />
                   </label>
                   <label>
-                    End (session time)
+                    End (local time)
                     <input
                       ref={rangeEndRef}
                       type="datetime-local"
@@ -893,7 +894,7 @@ export default function App() {
                                   ))}
                                 </div>
                               </td>
-                              <td className="time-cell">{r.time || "—"}</td>
+                              <td className="time-cell">{formatSessionTime(r.time)}</td>
                             </tr>
                           ))}
                       </tbody>
