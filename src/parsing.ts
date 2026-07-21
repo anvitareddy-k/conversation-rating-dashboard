@@ -210,13 +210,24 @@ export function pickTagsByKind(row: RatingRow, kind: PickableTagKind): string[] 
   return row.categoryTags;
 }
 
+/**
+ * Prefer `overall_score` (legacy exports); fall back to `overall_rating`
+ * (newer exports). Both are already on the dashboard's ~0–10 scale.
+ */
+function parseOverallScore(r: Record<string, string>): number {
+  const raw = csvColumn(r, "overall_score", "overall_rating", "overall rating");
+  if (raw == null || String(raw).trim() === "") return NaN;
+  const v = parseFloat(raw);
+  return Number.isFinite(v) ? v : NaN;
+}
+
 export function normalizeRowsFromCsv(data: Record<string, string>[]): RatingRow[] {
   const rows: RatingRow[] = [];
   for (const r of data) {
-    const overall = parseFloat(r.overall_score);
-    const axis1 = parseFloat(r.axis1);
-    const axis2 = parseFloat(r.axis2);
-    const axis3 = parseFloat(r.axis3);
+    const overall = parseOverallScore(r);
+    const axis1 = parseFloat(csvColumn(r, "axis1") ?? "");
+    const axis2 = parseFloat(csvColumn(r, "axis2") ?? "");
+    const axis3 = parseFloat(csvColumn(r, "axis3") ?? "");
     const allTags = splitTags(csvColumn(r, "tags"));
     const categoryFromCol = splitTags(csvColumn(r, "category_tags", "category tags"));
     const discoveryFromCol = splitTags(csvColumn(r, "discovery_tags", "discovery tags"));
@@ -237,11 +248,12 @@ export function normalizeRowsFromCsv(data: Record<string, string>[]): RatingRow[
       categoryTagsRaw,
       discoveryTagsRaw
     );
+    const turnsRaw = csvColumn(r, "message_count", "turns", "num_turns", "num turns");
     rows.push({
-      chatbot_sid: r.chatbot_sid,
-      time: r.time,
-      user_id: r.user_id,
-      num_turns: parseInt(String(r.message_count || ""), 10) || undefined,
+      chatbot_sid: csvColumn(r, "chatbot_sid", "chatbot sid"),
+      time: csvColumn(r, "time"),
+      user_id: csvColumn(r, "user_id", "user id"),
+      num_turns: parseInt(String(turnsRaw || ""), 10) || undefined,
       overall_score: Number.isFinite(overall) ? overall : NaN,
       axis1: Number.isFinite(axis1) ? axis1 : NaN,
       axis2: Number.isFinite(axis2) ? axis2 : NaN,
@@ -252,7 +264,7 @@ export function normalizeRowsFromCsv(data: Record<string, string>[]): RatingRow[
       structuralTags,
       tagReasons: {},
       discoveryTagReasons: {},
-      reasoning: r.reasoning,
+      reasoning: csvColumn(r, "reasoning"),
       tags: [...structuralTags, ...qaTags, ...categoryTags, ...discoveryTags],
     });
   }
