@@ -1,4 +1,5 @@
 import type { LoadedBatch } from "./parsing";
+import { setDateInputValue } from "./parsing";
 
 export type ReleaseMarkerSource = "builtin" | "manual";
 
@@ -7,13 +8,15 @@ export type ReleaseMarker = {
   label: string;
   batchId: string;
   source?: ReleaseMarkerSource;
+  /** Calendar day this marker is locked to (YYYY-MM-DD), when known. */
+  anchorDay?: string;
 };
 
 /** First calendar day counted as post-release data for a shipped prompt/model change. */
 export type BuiltinReleaseDefinition = {
   id: string;
   label: string;
-  /** YYYY-MM-DD — matches the first uploaded day on or after this date. */
+  /** YYYY-MM-DD — hard-coded release day; marker locks to this date. */
   firstPostReleaseDay: string;
 };
 
@@ -34,10 +37,21 @@ function startOfLocalDay(isoDate: string): Date {
   return new Date(year, month - 1, day);
 }
 
+function batchDayKey(batch: LoadedBatch): string | null {
+  if (!batch.periodDate) return null;
+  return setDateInputValue(batch.periodDate);
+}
+
 function batchDayTime(batch: LoadedBatch): number | null {
   if (!batch.periodDate) return null;
   const d = batch.periodDate;
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+function formatReleaseDayLabel(isoDate: string): string {
+  const d = startOfLocalDay(isoDate);
+  if (Number.isNaN(d.getTime())) return isoDate;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
 /** Marker is usable only when its batch exists and has a calendar date. */
@@ -55,6 +69,18 @@ export function pruneInvalidManualReleaseMarkers(sortedBatches: LoadedBatch[]): 
   if (valid.length !== manual.length) saveManualReleaseMarkers(valid);
 }
 
+export function findBatchOnExactDay(
+  sortedBatches: LoadedBatch[],
+  isoDate: string
+): LoadedBatch | null {
+  const target = startOfLocalDay(isoDate).getTime();
+  for (const batch of sortedBatches) {
+    const day = batchDayTime(batch);
+    if (day != null && day === target) return batch;
+  }
+  return null;
+}
+
 export function findFirstBatchOnOrAfter(
   sortedBatches: LoadedBatch[],
   isoDate: string
@@ -67,21 +93,87 @@ export function findFirstBatchOnOrAfter(
   return null;
 }
 
+/**
+ * Resolve the calendar day a builtin release should attach to.
+ * Only the hard-coded day itself, or the next calendar day if that file is missing
+ * (e.g. Jun 10 → Jun 11). Never jumps to a later month.
+ */
+export function resolveBuiltinAnchorDay(
+  allBatchesSorted: LoadedBatch[],
+  isoDate: string
+): string | null {
+  const exact = findBatchOnExactDay(allBatchesSorted, isoDate);
+  if (exact) return batchDayKey(exact);
+
+  const release = startOfLocalDay(isoDate);
+  const nextDay = new Date(release);
+  nextDay.setDate(nextDay.getDate() + 1);
+  const nextKey = setDateInputValue(nextDay);
+  const next = findBatchOnExactDay(allBatchesSorted, nextKey);
+  return next ? nextKey : null;
+}
+
+function findBatchByDayKey(
+  sortedBatches: LoadedBatch[],
+  dayKey: string
+): LoadedBatch | null {
+  for (const batch of sortedBatches) {
+    if (batchDayKey(batch) === dayKey) return batch;
+  }
+  return null;
+}
+
+function visibleRangeMs(sortedBatches: LoadedBatch[]): { min: number; max: number } | null {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const batch of sortedBatches) {
+    const t = batchDayTime(batch);
+    if (t == null) continue;
+    if (t < min) min = t;
+    if (t > max) max = t;
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+  return { min, max };
+}
+
 export function buildBuiltinReleaseMarkers(
   sortedBatches: LoadedBatch[],
-  hiddenBuiltinIds: string[] = []
+  hiddenBuiltinIds: string[] = [],
+  /** Full loaded series used to lock builtins to their hard-coded calendar day. */
+  allBatchesSorted: LoadedBatch[] = sortedBatches
 ): ReleaseMarker[] {
   const hidden = new Set(hiddenBuiltinIds);
+  const resolveFrom =
+    allBatchesSorted.length > 0 ? allBatchesSorted : sortedBatches;
+  const visible = visibleRangeMs(sortedBatches);
+
   return BUILTIN_RELEASE_DEFINITIONS.flatMap((def) => {
     if (hidden.has(def.id)) return [];
-    const batch = findFirstBatchOnOrAfter(sortedBatches, def.firstPostReleaseDay);
+
+    const releaseTime = startOfLocalDay(def.firstPostReleaseDay).getTime();
+    const anchorDay = resolveBuiltinAnchorDay(resolveFrom, def.firstPostReleaseDay);
+    if (!anchorDay) return [];
+
+    const anchorTime = startOfLocalDay(anchorDay).getTime();
+
+    // Hide when the current view does not include the release / its anchor day
+    // (e.g. July-only range must not show a June 10 release).
+    if (visible) {
+      const releaseInView = releaseTime >= visible.min && releaseTime <= visible.max;
+      const anchorInView = anchorTime >= visible.min && anchorTime <= visible.max;
+      if (!releaseInView && !anchorInView) return [];
+    }
+
+    const batch = findBatchByDayKey(sortedBatches, anchorDay);
     if (!batch) return [];
+
     return [
       {
         id: `builtin-${def.id}`,
-        label: def.label,
+        label: `${def.label} (${formatReleaseDayLabel(def.firstPostReleaseDay)})`,
         batchId: batch.id,
         source: "builtin" as const,
+        anchorDay: def.firstPostReleaseDay,
       },
     ];
   });
@@ -90,15 +182,18 @@ export function buildBuiltinReleaseMarkers(
 export function resolveReleaseMarkers(
   sortedBatches: LoadedBatch[],
   manualMarkers: ReleaseMarker[],
-  hiddenBuiltinIds: string[] = []
+  hiddenBuiltinIds: string[] = [],
+  allBatchesSorted: LoadedBatch[] = sortedBatches
 ): ReleaseMarker[] {
   const manual = manualMarkers
     .map((m) => ({ ...m, source: "manual" as const }))
     .filter((m) => isResolvableReleaseMarker(m, sortedBatches));
   const manualBatchIds = new Set(manual.map((m) => m.batchId));
-  const builtin = buildBuiltinReleaseMarkers(sortedBatches, hiddenBuiltinIds).filter(
-    (m) => !manualBatchIds.has(m.batchId)
-  );
+  const builtin = buildBuiltinReleaseMarkers(
+    sortedBatches,
+    hiddenBuiltinIds,
+    allBatchesSorted
+  ).filter((m) => !manualBatchIds.has(m.batchId));
   return [...builtin, ...manual].sort(
     (a, b) =>
       sortedBatches.findIndex((batch) => batch.id === a.batchId) -

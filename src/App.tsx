@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -15,7 +15,6 @@ import {
   filterRows,
   filterRowsByTags,
   filterBatchesByRange,
-  appliedRangeFromStrings,
   formatSessionTime,
   sessionTimeRangeFromRows,
   computeExclusiveTagStats,
@@ -34,6 +33,8 @@ import { FunnelTab } from "./components/FunnelTab";
 import { DiscoveryTagsTab } from "./components/DiscoveryTagsTab";
 import { HtmlViewerTab } from "./components/HtmlViewerTab";
 import { LowRatedDailyChart } from "./components/LowRatedDailyChart";
+import { AvgTurnsDailyChart } from "./components/AvgTurnsDailyChart";
+import { DateRangeBar } from "./components/DateRangeBar";
 import {
   loadHiddenBuiltinReleaseIds,
   loadManualReleaseMarkers,
@@ -231,8 +232,6 @@ export default function App() {
   const [changePointBatchId, setChangePointBatchId] = useState<string | null>(() =>
     loadChangePointBatchId()
   );
-  const rangeStartRef = useRef<HTMLInputElement>(null);
-  const rangeEndRef = useRef<HTMLInputElement>(null);
 
   const rangeBatches = useMemo(() => {
     if (appliedRange === null) return batches;
@@ -270,14 +269,23 @@ export default function App() {
     [workingBatches]
   );
 
+  /** Full series (not date-filtered) so builtin releases stay locked to their hard-coded day. */
+  const sortedAllBatches = useMemo(() => {
+    const source = excludeErrors ? batchesExcludingErrors(batches) : batches;
+    return [...source].sort(
+      (a, b) => (a.periodDate?.getTime() ?? 0) - (b.periodDate?.getTime() ?? 0)
+    );
+  }, [batches, excludeErrors]);
+
   const releaseMarkers = useMemo(
     () =>
       resolveReleaseMarkers(
         sortedWorkingBatches,
         loadManualReleaseMarkers(),
-        loadHiddenBuiltinReleaseIds()
+        loadHiddenBuiltinReleaseIds(),
+        sortedAllBatches
       ),
-    [sortedWorkingBatches]
+    [sortedWorkingBatches, sortedAllBatches]
   );
 
   useEffect(() => {
@@ -356,6 +364,13 @@ export default function App() {
       ? (overallScores.reduce((a, b) => a + b, 0) / overallScores.length).toFixed(2)
       : "—";
 
+    const turnCounts = funnel
+      .map((r) => r.num_turns)
+      .filter((n): n is number => n != null && Number.isFinite(n) && n > 0);
+    const avgTurns = turnCounts.length
+      ? (turnCounts.reduce((a, b) => a + b, 0) / turnCounts.length).toFixed(1)
+      : "—";
+
     const qaTagStats = computeExclusiveTagStats(funnel, "qa", total);
     const categoryTagStats = computeExclusiveTagStats(funnel, "category", total);
     const poolLabel = tagFilter.lowScoreOnly ? "≤5-rated pool" : "all sessions";
@@ -365,6 +380,7 @@ export default function App() {
       poolN,
       funnelN,
       avgOverall,
+      avgTurns,
       qaTagStats,
       categoryTagStats,
       poolLabel,
@@ -496,19 +512,18 @@ export default function App() {
     })();
   }, []);
 
-  const applyRange = useCallback(() => {
-    const startStr = rangeStartRef.current?.value ?? rangeStartStr;
-    const endStr = rangeEndRef.current?.value ?? rangeEndStr;
-    if (startStr !== rangeStartStr) setRangeStartStr(startStr);
-    if (endStr !== rangeEndStr) setRangeEndStr(endStr);
-    setAppliedRange(appliedRangeFromStrings(startStr, endStr));
-  }, [rangeStartStr, rangeEndStr]);
-
-  const clearRange = useCallback(() => {
-    setRangeStartStr("");
-    setRangeEndStr("");
-    setAppliedRange(null);
-  }, []);
+  const applyDateRange = useCallback(
+    (
+      start: string,
+      end: string,
+      applied: { start: Date | null; end: Date | null } | null
+    ) => {
+      setRangeStartStr(start);
+      setRangeEndStr(end);
+      setAppliedRange(applied);
+    },
+    []
+  );
 
   const toggleQaTag = useCallback((tag: string) => {
     setTagFilter((f) => ({ ...f, qaTags: toggleInList(f.qaTags, tag) }));
@@ -522,6 +537,10 @@ export default function App() {
     setTagFilter((f) => ({ ...f, qaTags: [], categoryTags: [] }));
   }, []);
 
+  const updateTagFilter = useCallback((updater: (prev: TagFilterState) => TagFilterState) => {
+    setTagFilter(updater);
+  }, []);
+
   const openTimeline = useCallback((tag: string, kind: PickableTagKind) => {
     setTimelineFocusTag({ tag, kind });
     setActiveTab("timeline");
@@ -530,7 +549,9 @@ export default function App() {
   const hasData = rawRows.length > 0;
   const activeFilterCount = tagFilter.qaTags.length + tagFilter.categoryTags.length;
 
-  const discoveryPoolLabel = excludeErrors ? "all sessions (errors excluded)" : "all sessions";
+  const discoveryPoolLabel = excludeErrors
+    ? "all sessions (errors excluded)"
+    : "all sessions";
 
   const tabs: { id: TabId; label: string; desc: string; badge?: string }[] = [
     { id: "overview", label: "Overview", desc: "KPIs, charts & sessions" },
@@ -649,6 +670,10 @@ export default function App() {
                     <div className="label">Avg rated ≤ 5 score</div>
                     <div className="value">{stats.avgOverall}</div>
                   </div>
+                  <div className="kpi">
+                    <div className="label">Avg conversation length</div>
+                    <div className="value">{stats.avgTurns}</div>
+                  </div>
                   {rangeBatches.length > 1 ? (
                     <div className="kpi accent">
                       <div className="label">Days included</div>
@@ -657,39 +682,20 @@ export default function App() {
                   ) : null}
                 </div>
 
-                <div className="filters">
-                  <label>
-                    Start (local time)
-                    <input
-                      ref={rangeStartRef}
-                      type="datetime-local"
-                      value={rangeStartStr}
-                      onChange={(e) => setRangeStartStr(e.target.value)}
-                    />
-                  </label>
-                  <label>
-                    End (local time)
-                    <input
-                      ref={rangeEndRef}
-                      type="datetime-local"
-                      value={rangeEndStr}
-                      onChange={(e) => setRangeEndStr(e.target.value)}
-                    />
-                  </label>
-                  <button type="button" onClick={applyRange}>
-                    Apply range
-                  </button>
-                  <button type="button" onClick={clearRange}>
-                    Clear range
-                  </button>
-                </div>
+                <DateRangeBar
+                  batches={batches}
+                  startStr={rangeStartStr}
+                  endStr={rangeEndStr}
+                  appliedRange={appliedRange}
+                  onChange={applyDateRange}
+                />
 
                 <div className="filters tag-funnel-bar">
                   <label className="checkbox-inline">
                     <input
                       type="checkbox"
                       checked={tagFilter.lowScoreOnly}
-                      onChange={(e) => setTagFilter((f) => ({ ...f, lowScoreOnly: e.target.checked }))}
+onChange={(e) => setTagFilter((f) => ({ ...f, lowScoreOnly: e.target.checked }))}
                     />
                     Limit pool to score ≤ 5
                   </label>
@@ -702,7 +708,7 @@ export default function App() {
                       step={0.1}
                       placeholder="any"
                       value={tagFilter.maxScore ?? ""}
-                      onChange={(e) => {
+onChange={(e) => {
                         const v = e.target.value.trim();
                         setTagFilter((f) => ({
                           ...f,
@@ -715,7 +721,7 @@ export default function App() {
                     Tag match
                     <select
                       value={tagFilter.matchMode}
-                      onChange={(e) =>
+onChange={(e) =>
                         setTagFilter((f) => ({
                           ...f,
                           matchMode: e.target.value as "all" | "any",
@@ -789,6 +795,13 @@ export default function App() {
                   <LowRatedDailyChart
                     batches={workingBatches}
                     releaseMarkers={releaseMarkers}
+                    compact={workingBatches.length === 1}
+                  />
+                ) : null}
+
+                {workingBatches.length >= 1 ? (
+                  <AvgTurnsDailyChart
+                    batches={workingBatches}
                     compact={workingBatches.length === 1}
                   />
                 ) : null}
@@ -907,6 +920,7 @@ export default function App() {
             {activeTab === "timeline" ? (
               <TimelineTab
                 batches={workingBatches}
+                allBatches={sortedAllBatches}
                 lowScoreOnly={tagFilter.lowScoreOnly}
                 initialTag={timelineFocusTag}
               />
@@ -917,7 +931,7 @@ export default function App() {
                 pool={analyticsPool}
                 totalCount={stats.total}
                 tagFilter={tagFilter}
-                onUpdateFilter={setTagFilter}
+                onUpdateFilter={updateTagFilter}
                 poolLabel={stats.poolLabel}
               />
             ) : null}

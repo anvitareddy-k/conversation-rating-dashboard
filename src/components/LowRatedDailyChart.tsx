@@ -183,10 +183,11 @@ export function LowRatedDailyChart({
     [series]
   );
 
-  const overlays = useMemo(
-    () => computeTimelineReleaseOverlays(fakeTimeline, releaseMarkers),
-    [fakeTimeline, releaseMarkers]
-  );
+  const overlays = useMemo(() => {
+    const visibleIds = new Set(series.map((p) => p.batchId));
+    const markersInView = releaseMarkers.filter((m) => visibleIds.has(m.batchId));
+    return computeTimelineReleaseOverlays(fakeTimeline, markersInView);
+  }, [fakeTimeline, releaseMarkers, series]);
 
   const markerPlugin = useMemo(() => createReleaseMarkerPlugin(overlays), [overlays]);
 
@@ -397,6 +398,7 @@ export function LowRatedDailyChart({
       </div>
       <div className={`tl-chart-canvas ${compact ? "short" : "stacked"}`}>
         <Bar
+          key={`score-stack-${series.map((p) => p.batchId).join("|")}-${overlays.map((o) => o.markerId).join("|") || "none"}`}
           data={overviewChartData}
           options={overviewOptions}
           plugins={[

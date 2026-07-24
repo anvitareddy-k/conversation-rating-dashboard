@@ -121,6 +121,37 @@ export function computeDailyLowRatedSeries(batches: LoadedBatch[]): DailyLowRate
   });
 }
 
+export type DailyAvgTurnsPoint = {
+  batchId: string;
+  label: string;
+  avgTurns: number | null;
+  sessionCount: number;
+  withTurnsCount: number;
+};
+
+/** Day-wise average conversation length (turns / message_count). */
+export function computeDailyAvgTurnsSeries(batches: LoadedBatch[]): DailyAvgTurnsPoint[] {
+  const sorted = [...batches].sort(
+    (a, b) => (a.periodDate?.getTime() ?? 0) - (b.periodDate?.getTime() ?? 0)
+  );
+  return sorted.map((batch) => {
+    const turns = batch.rows
+      .map((r) => r.num_turns)
+      .filter((n): n is number => n != null && Number.isFinite(n) && n > 0);
+    const withTurnsCount = turns.length;
+    const avgTurns = withTurnsCount
+      ? turns.reduce((a, b) => a + b, 0) / withTurnsCount
+      : null;
+    return {
+      batchId: batch.id,
+      label: batch.label,
+      avgTurns,
+      sessionCount: batch.rows.length,
+      withTurnsCount,
+    };
+  });
+}
+
 export type FunnelStep = {
   label: string;
   kind: "pool" | "qa" | "category" | "score";

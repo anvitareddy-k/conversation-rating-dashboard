@@ -99,13 +99,41 @@ export function filterRows(rows: RatingRow[], start: Date | null, end: Date | nu
 
 export type AppliedTimeRange = { start: Date | null; end: Date | null };
 
+/** Format a Date as `YYYY-MM-DD` in local time (for `<input type="date">`). */
+export function setDateInputValue(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/** @deprecated Prefer setDateInputValue — kept for callers expecting datetime-local. */
+export function setDatetimeLocalValue(date: Date): string {
+  return `${setDateInputValue(date)}T${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
 /**
- * Parse a `datetime-local` value (`YYYY-MM-DDTHH:mm`) as a local wall-clock Date.
- * Avoid `new Date(isoWithoutZ)`, which is inconsistent across engines.
+ * Parse a date (`YYYY-MM-DD`) or datetime-local (`YYYY-MM-DDTHH:mm`) value
+ * as a local wall-clock Date. Avoid `new Date(isoWithoutZ)` engine quirks.
  */
-function parseDatetimeLocalValue(value: string): Date | null {
+function parseLocalInputValue(value: string, endOfDay: boolean): Date | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
+
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (dateOnly) {
+    const d = new Date(
+      Number(dateOnly[1]),
+      Number(dateOnly[2]) - 1,
+      Number(dateOnly[3]),
+      endOfDay ? 23 : 0,
+      endOfDay ? 59 : 0,
+      endOfDay ? 59 : 0,
+      endOfDay ? 999 : 0
+    );
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/.exec(trimmed);
   if (!m) {
     const d = new Date(trimmed);
@@ -120,19 +148,30 @@ function parseDatetimeLocalValue(value: string): Date | null {
     m[6] != null ? Number(m[6]) : 0,
     0
   );
-  return Number.isNaN(d.getTime()) ? null : d;
+  if (Number.isNaN(d.getTime())) return null;
+  // datetime-local end: include the full selected minute
+  return endOfDay && !m[6] ? new Date(d.getTime() + 59_999) : d;
 }
 
-/** Parse `datetime-local` value as range start (minute precision). */
+/** Parse range start — start of day for date-only, exact minute for datetime-local. */
 export function parseDatetimeLocalStart(value: string): Date | null {
-  return parseDatetimeLocalValue(value);
+  return parseLocalInputValue(value, false);
 }
 
-/** Parse `datetime-local` value as inclusive range end (covers the full selected minute). */
+/** Parse range end — end of day for date-only, end of minute for datetime-local. */
 export function parseDatetimeLocalEnd(value: string): Date | null {
-  const d = parseDatetimeLocalValue(value);
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return parseLocalInputValue(trimmed, true);
+  }
+  const d = parseLocalInputValue(trimmed, false);
   if (!d) return null;
-  return new Date(d.getTime() + 59_999);
+  // datetime-local without seconds: cover the full minute
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(trimmed)) {
+    return new Date(d.getTime() + 59_999);
+  }
+  return d;
 }
 
 export function appliedRangeFromStrings(startStr: string, endStr: string): AppliedTimeRange {
@@ -158,13 +197,28 @@ export function sessionTimeRangeFromRows(rows: RatingRow[]): {
   endStr: string;
   applied: AppliedTimeRange;
 } | null {
-  const times = rows.map((r) => parseSessionTime(r.time)).filter(Boolean) as Date[];
-  if (!times.length) return null;
-  const min = new Date(Math.min(...times.map((d) => d.getTime())));
-  const max = new Date(Math.max(...times.map((d) => d.getTime())));
-  const startStr = setDatetimeLocalValue(min);
-  const endStr = setDatetimeLocalValue(max);
+  let minT = Infinity;
+  let maxT = -Infinity;
+  for (const row of rows) {
+    const d = parseSessionTime(row.time);
+    if (!d) continue;
+    const t = d.getTime();
+    if (t < minT) minT = t;
+    if (t > maxT) maxT = t;
+  }
+  if (!Number.isFinite(minT) || !Number.isFinite(maxT)) return null;
+  const startStr = setDateInputValue(new Date(minT));
+  const endStr = setDateInputValue(new Date(maxT));
   return { startStr, endStr, applied: appliedRangeFromStrings(startStr, endStr) };
+}
+
+/** Human-readable local date for range summaries. */
+export function formatDateLabel(date: Date): string {
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 function splitTags(tagsCell: string | undefined): string[] {
@@ -612,11 +666,6 @@ export function mergeAndDedupeByChatbotSid(rows: RatingRow[]): RatingRow[] {
     if (tn >= tp) bySid.set(sid, r);
   }
   return [...bySid.values(), ...noSid];
-}
-
-export function setDatetimeLocalValue(date: Date): string {
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 16);
 }
 
 /** Infer a human-readable period label and sort date from filename or row times. */

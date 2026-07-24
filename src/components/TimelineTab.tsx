@@ -70,6 +70,8 @@ function kindShortLabel(kind: PickableTagKind): string {
 
 type TimelineTabProps = {
   batches: LoadedBatch[];
+  /** Full loaded series used to lock builtin release markers to hard-coded dates. */
+  allBatches?: LoadedBatch[];
   lowScoreOnly: boolean;
   initialTag?: { tag: string; kind: PickableTagKind } | null;
 };
@@ -81,6 +83,7 @@ function deltaArrow(delta: number): string {
 
 export function TimelineTab({
   batches,
+  allBatches,
   lowScoreOnly,
   initialTag,
 }: TimelineTabProps) {
@@ -165,6 +168,13 @@ export function TimelineTab({
     [batches]
   );
 
+  const sortedAllBatches = useMemo(() => {
+    const source = allBatches?.length ? allBatches : batches;
+    return [...source].sort(
+      (a, b) => (a.periodDate?.getTime() ?? 0) - (b.periodDate?.getTime() ?? 0)
+    );
+  }, [allBatches, batches]);
+
   useEffect(() => {
     pruneInvalidManualReleaseMarkers(sortedBatches);
     setManualReleaseMarkers((prev) => {
@@ -174,8 +184,14 @@ export function TimelineTab({
   }, [sortedBatches]);
 
   const releaseMarkers = useMemo(
-    () => resolveReleaseMarkers(sortedBatches, manualReleaseMarkers, hiddenBuiltinIds),
-    [sortedBatches, manualReleaseMarkers, hiddenBuiltinIds]
+    () =>
+      resolveReleaseMarkers(
+        sortedBatches,
+        manualReleaseMarkers,
+        hiddenBuiltinIds,
+        sortedAllBatches
+      ),
+    [sortedBatches, sortedAllBatches, manualReleaseMarkers, hiddenBuiltinIds]
   );
 
   useEffect(() => {
@@ -259,10 +275,11 @@ export function TimelineTab({
     return `Average % across ${timeline.length} ${dayWord} included on the chart (${poolLabel}). Not the latest day alone.`;
   }, [timelineAvg, selectedTag, timeline.length, poolLabel]);
 
-  const releaseOverlays = useMemo(
-    () => computeTimelineReleaseOverlays(timeline, releaseMarkers),
-    [timeline, releaseMarkers]
-  );
+  const releaseOverlays = useMemo(() => {
+    const visibleIds = new Set(timeline.map((p) => p.batchId));
+    const markersInView = releaseMarkers.filter((m) => visibleIds.has(m.batchId));
+    return computeTimelineReleaseOverlays(timeline, markersInView);
+  }, [timeline, releaseMarkers]);
 
   const releaseMarkerPlugin = useMemo(
     () => createReleaseMarkerPlugin(releaseOverlays),
@@ -781,12 +798,14 @@ export function TimelineTab({
             <div className="tl-chart-canvas">
               {chartView === "bar" ? (
                 <Bar
+                  key={`tl-bar-${timeline.map((p) => p.batchId).join("|")}-${releaseOverlays.map((o) => o.markerId).join("|") || "none"}`}
                   data={barChartData}
                   options={barChartOptions}
                   plugins={[releaseMarkerPlugin as import("chart.js").Plugin<"bar">]}
                 />
               ) : (
                 <Line
+                  key={`tl-line-${timeline.map((p) => p.batchId).join("|")}-${releaseOverlays.map((o) => o.markerId).join("|") || "none"}`}
                   data={lineChartData}
                   options={lineChartOptions}
                   plugins={[releaseMarkerPlugin as import("chart.js").Plugin<"line">]}
@@ -821,8 +840,9 @@ export function TimelineTab({
           <div className="tl-config-panel flat">
             <section className="tl-config-section">
               <p className="tl-muted" style={{ margin: "0 0 0.75rem", fontSize: "0.82rem" }}>
-                Built-in releases are matched automatically from uploaded day labels. Add custom
-                markers below, or hide a built-in you do not need.
+                Built-in releases are locked to hard-coded calendar days (Slotfill Fix → Jun 10,
+                2026) and only appear when that period is in range. Add custom markers below, or
+                hide a built-in you do not need.
               </p>
               <div className="tl-config-row">
                 <input

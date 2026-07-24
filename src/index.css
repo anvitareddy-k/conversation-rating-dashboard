@@ -506,7 +506,10 @@ table.tag-table tr.row-selected {
   color: var(--muted);
 }
 
-.filters input[type="datetime-local"] {
+.filters input[type="date"],
+.filters input[type="datetime-local"],
+.filters input[type="number"],
+.filters select {
   background: #fff;
   border: 1px solid var(--border);
   color: var(--text);
@@ -528,6 +531,146 @@ table.tag-table tr.row-selected {
 
 .filters button:hover {
   background: var(--bg);
+}
+
+.date-range-bar {
+  margin-bottom: 1.25rem;
+  padding: 1rem 1.15rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.date-range-bar-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+}
+
+.date-range-bar-title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.date-range-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.date-range-summary {
+  font-size: 0.98rem;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.date-range-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.date-range-preset {
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.date-range-preset:hover {
+  background: var(--bg);
+}
+
+.date-range-preset.active {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+.date-range-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.65rem 0.85rem;
+}
+
+.date-range-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.date-range-field input[type="date"] {
+  background: #fff;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  font-size: 0.92rem;
+  font-weight: 500;
+  min-width: 10.5rem;
+  color-scheme: light;
+}
+
+.date-range-field input[type="date"]:focus {
+  outline: 2px solid #93c5fd;
+  outline-offset: 1px;
+  border-color: #60a5fa;
+}
+
+.date-range-sep {
+  color: var(--muted);
+  font-size: 1rem;
+  padding-bottom: 0.55rem;
+}
+
+.date-range-reset {
+  padding: 0.5rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: 1px;
+}
+
+.date-range-reset:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+@media (max-width: 640px) {
+  .date-range-field input[type="date"] {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .date-range-inputs {
+    align-items: stretch;
+  }
+
+  .date-range-sep {
+    display: none;
+  }
 }
 
 .charts-grid {
