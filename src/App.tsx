@@ -34,6 +34,7 @@ import { DiscoveryTagsTab } from "./components/DiscoveryTagsTab";
 import { HtmlViewerTab } from "./components/HtmlViewerTab";
 import { LowRatedDailyChart } from "./components/LowRatedDailyChart";
 import { AvgTurnsDailyChart } from "./components/AvgTurnsDailyChart";
+import { LowRatedTrendChart } from "./components/LowRatedTrendChart";
 import { DateRangeBar } from "./components/DateRangeBar";
 import {
   loadHiddenBuiltinReleaseIds,
@@ -795,6 +796,13 @@ onChange={(e) =>
                   <LowRatedDailyChart
                     batches={workingBatches}
                     releaseMarkers={releaseMarkers}
+                    compact={workingBatches.length === 1}
+                  />
+                ) : null}
+
+                {workingBatches.length >= 1 ? (
+                  <LowRatedTrendChart
+                    batches={workingBatches}
                     compact={workingBatches.length === 1}
                   />
                 ) : null}
