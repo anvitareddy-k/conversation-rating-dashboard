@@ -16,12 +16,14 @@ async function fetchJson<T>(url: string): Promise<T> {
 export function decodeCompactDay(file: CompactDayFile): RatingRow[] {
   const { dict, rows, date } = file;
   return rows.map((tuple) => {
-    const [sid, t, turns, score, a1, a2, a3, qaIdx, catIdx, discIdx, err] = tuple;
+    const [sid, t, turns, score, a1, a2, a3, qaIdx, catIdx, discIdx, err, askIdx] = tuple;
     const qaTags = qaIdx.map((i) => dict[i]).filter(Boolean);
     const categoryTags = catIdx.map((i) => dict[i]).filter(Boolean);
     const discoveryTags = discIdx.map((i) => dict[i]).filter(Boolean);
     if (err && !qaTags.includes("Error")) qaTags.push("Error");
     const tags = [...qaTags, ...categoryTags, ...discoveryTags];
+    const learningAskType =
+      typeof askIdx === "number" && askIdx >= 0 ? dict[askIdx] || undefined : undefined;
     return {
       chatbot_sid: sid || undefined,
       time: t ? String(t) : undefined,
@@ -34,6 +36,7 @@ export function decodeCompactDay(file: CompactDayFile): RatingRow[] {
       categoryTags,
       discoveryTags,
       structuralTags: [],
+      learningAskType,
       tagReasons: EMPTY_REASONS,
       discoveryTagReasons: EMPTY_REASONS,
       tags,

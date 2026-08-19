@@ -769,3 +769,90 @@ export function topTagsAcrossBatches(
   const combined = batches.flatMap((b) => poolFromBatch(b, lowScoreOnly));
   return computeTagStats(combined, pickTags, combined.length);
 }
+
+/** learning_ask_type share for the selected days. Empty if the column is absent. */
+export function computeAskTypeStats(
+  batches: LoadedBatch[],
+  rows: RatingRow[],
+  lowScoreOnly: boolean
+): TagStatRow[] {
+  const merged: Record<string, number> = {};
+  let pool = 0;
+  const sliced = batches.filter((b) => activeSlice(b)?.ask);
+  if (sliced.length === batches.length && batches.length > 0) {
+    for (const batch of batches) {
+      const slice = activeSlice(batch)!;
+      pool += lowScoreOnly ? slice.lowRated : slice.total;
+      const map = lowScoreOnly ? slice.askLow ?? {} : slice.ask ?? {};
+      for (const [tag, n] of Object.entries(map)) merged[tag] = (merged[tag] || 0) + n;
+    }
+  } else {
+    const poolRows = lowScoreOnly ? rows.filter(isLowRated) : rows;
+    pool = poolRows.length;
+    for (const r of poolRows) {
+      const t = r.learningAskType?.trim();
+      if (!t) continue;
+      merged[t] = (merged[t] || 0) + 1;
+    }
+  }
+  const labeled = Object.values(merged).reduce((s, n) => s + n, 0);
+  if (!labeled) return [];
+  return Object.entries(merged)
+    .filter(([, count]) => count > 0)
+    .map(([tag, count]) => ({
+      tag,
+      count,
+      pctOfPool: (100 * count) / labeled,
+      pctOfTotal: pool > 0 ? (100 * count) / pool : (100 * count) / labeled,
+    }))
+    .sort((a, b) => b.count - a.count);
+}
+
+export type DailyAskTypePoint = {
+  batchId: string;
+  label: string;
+  labeled: number;
+  total: number;
+  counts: Record<string, number>;
+};
+
+function askCountsForBatch(batch: LoadedBatch, lowScoreOnly: boolean): Record<string, number> {
+  const slice = activeSlice(batch);
+  if (slice?.ask) {
+    return { ...(lowScoreOnly ? slice.askLow ?? {} : slice.ask) };
+  }
+  const counts: Record<string, number> = {};
+  const rows = lowScoreOnly ? batch.rows.filter(isLowRated) : batch.rows;
+  for (const r of rows) {
+    const t = r.learningAskType?.trim();
+    if (!t) continue;
+    counts[t] = (counts[t] || 0) + 1;
+  }
+  return counts;
+}
+
+/** Day-wise learning_ask_type counts. Days with no values are omitted. */
+export function computeDailyAskTypeSeries(
+  batches: LoadedBatch[],
+  lowScoreOnly: boolean
+): DailyAskTypePoint[] {
+  const sorted = [...batches].sort(
+    (a, b) => (a.periodDate?.getTime() ?? 0) - (b.periodDate?.getTime() ?? 0)
+  );
+  const points: DailyAskTypePoint[] = [];
+  for (const batch of sorted) {
+    const counts = askCountsForBatch(batch, lowScoreOnly);
+    const labeled = Object.values(counts).reduce((s, n) => s + n, 0);
+    if (!labeled) continue;
+    const slice = activeSlice(batch);
+    const total = slice
+      ? lowScoreOnly
+        ? slice.lowRated
+        : slice.total
+      : lowScoreOnly
+        ? batch.rows.filter(isLowRated).length
+        : batch.rows.length;
+    points.push({ batchId: batch.id, label: batch.label, labeled, total, counts });
+  }
+  return points;
+}

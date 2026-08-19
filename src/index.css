@@ -303,6 +303,11 @@ main {
   border-top: 3px solid #7c3aed;
 }
 
+.tag-stats-panel.kind-asktype {
+  border-top: 3px solid #16a085;
+  margin-top: 1rem;
+}
+
 .tag-stats-panel-head {
   display: flex;
   align-items: center;

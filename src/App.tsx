@@ -30,6 +30,7 @@ import { FunnelTab } from "./components/FunnelTab";
 import { DiscoveryTagsTab } from "./components/DiscoveryTagsTab";
 import { HtmlViewerTab } from "./components/HtmlViewerTab";
 import { OverviewTab } from "./components/OverviewTab";
+import { CategoriesTab } from "./components/CategoriesTab";
 import {
   loadHiddenBuiltinReleaseIds,
   loadManualReleaseMarkers,
@@ -45,7 +46,7 @@ import { loadBundledData, parseFileContent } from "./loadData";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip, Legend);
 
-type TabId = "overview" | "timeline" | "funnel" | "discovery" | "htmlviewer";
+type TabId = "overview" | "categories" | "timeline" | "funnel" | "discovery" | "htmlviewer";
 
 function toggleInList(list: string[], tag: string): string[] {
   return list.includes(tag) ? list.filter((t) => t !== tag) : [...list, tag];
@@ -455,6 +456,7 @@ export default function App() {
 
   const tabs: { id: TabId; label: string; desc: string; badge?: string }[] = [
     { id: "overview", label: "Overview", desc: "KPIs, charts & sessions" },
+    { id: "categories", label: "Categories", desc: "Learning ask type trend by day" },
     {
       id: "timeline",
       label: "Timeline",
@@ -588,6 +590,19 @@ export default function App() {
                   releaseMarkers={releaseMarkers}
                   sessionsLoading={sessionsLoading}
                   sessionsNote={sessionsNote}
+                />
+              ) : null}
+
+              {activeTab === "categories" ? (
+                <CategoriesTab
+                  batches={batches}
+                  workingBatches={workingBatches}
+                  rangeStartStr={rangeStartStr}
+                  rangeEndStr={rangeEndStr}
+                  appliedRange={appliedRange}
+                  onDateRange={applyDateRange}
+                  tagFilter={tagFilter}
+                  onTagFilter={updateTagFilter}
                 />
               ) : null}
 

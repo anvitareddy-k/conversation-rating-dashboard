@@ -135,6 +135,8 @@ function emptySlice() {
     disc: {},
     qaLow: {},
     catLow: {},
+    ask: {},
+    askLow: {},
     bands: { "1-2": 0, "2-3": 0, "3-4": 0, "4-5": 0 },
   };
 }
@@ -165,6 +167,10 @@ function addRowToSlice(slice, row) {
     if (low) bump(slice.catLow, t);
   }
   for (const t of row.disc) bump(slice.disc, t);
+  if (row.ask) {
+    bump(slice.ask, row.ask);
+    if (low) bump(slice.askLow, row.ask);
+  }
 }
 
 function inferDate(fileName, times) {
@@ -218,6 +224,7 @@ function normalizeCsvRow(r) {
       : disjoint.qaTags;
   const turnsRaw = csvColumn(r, "message_count", "turns", "num_turns", "num turns");
   const turns = parseInt(String(turnsRaw || ""), 10) || 0;
+  const ask = String(csvColumn(r, "learning_ask_type", "learning ask type") || "").trim();
   return {
     sid: String(csvColumn(r, "chatbot_sid", "chatbot sid") || "").trim(),
     t: String(csvColumn(r, "time") || "").trim(),
@@ -229,6 +236,7 @@ function normalizeCsvRow(r) {
     qa,
     cat: disjoint.categoryTags,
     disc: disjoint.discoveryTags,
+    ask: ask || "",
     err: qa.includes("Error") ? 1 : 0,
   };
 }
@@ -259,6 +267,7 @@ export function packData(root = process.cwd()) {
     const st = statSync(join(dataDir, name));
     hash.update(`${name}:${st.size}:${Math.trunc(st.mtimeMs)}`);
   }
+  hash.update("format:ask-v2");
   const version = hash.digest("hex").slice(0, 16);
 
   const existingVersionPath = join(compactDir, "manifest.json");
@@ -315,6 +324,7 @@ export function packData(root = process.cwd()) {
         row.cat.map((t) => intern(dict, indexOf, t)),
         row.disc.map((t) => intern(dict, indexOf, t)),
         row.err,
+        row.ask ? intern(dict, indexOf, row.ask) : -1,
       ]);
     }
 

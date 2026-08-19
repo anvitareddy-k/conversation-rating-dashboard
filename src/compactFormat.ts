@@ -14,6 +14,8 @@ export type DaySlice = {
   disc: Record<string, number>;
   qaLow: Record<string, number>;
   catLow: Record<string, number>;
+  ask?: Record<string, number>;
+  askLow?: Record<string, number>;
   bands: Record<LowScoreBandId, number>;
 };
 
@@ -41,7 +43,7 @@ export type CompactManifest = {
   days: CompactDayMeta[];
 };
 
-/** sid, time, turns, score, a1, a2, a3, qaIdx[], catIdx[], discIdx[], err */
+/** sid, time, turns, score, a1, a2, a3, qaIdx[], catIdx[], discIdx[], err, askIdx|-1 */
 export type CompactRowTuple = [
   string,
   string | 0,
@@ -54,6 +56,7 @@ export type CompactRowTuple = [
   number[],
   number[],
   0 | 1,
+  number?,
 ];
 
 export type CompactDayFile = {

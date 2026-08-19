@@ -23,6 +23,8 @@ export type RatingRow = {
   discoveryTags: string[];
   /** Session structure tags (Slotfill, Video, …) */
   structuralTags: string[];
+  /** Product learning ask type (learning_ask_type column), when present. */
+  learningAskType?: string;
   tagReasons: Record<string, string>;
   discoveryTagReasons: Record<string, string>;
   /** All display tags combined (structural + qa + category + discovery) */
@@ -348,6 +350,8 @@ export function normalizeRowsFromCsv(data: Record<string, string>[]): RatingRow[
       discoveryTagsRaw
     );
     const turnsRaw = csvColumn(r, "message_count", "turns", "num_turns", "num turns");
+    const askRaw = String(csvColumn(r, "learning_ask_type", "learning ask type") || "").trim();
+    const learningAskType = askRaw || undefined;
     const reasoning = csvColumn(r, "reasoning");
     const qaWithError =
       qaTags.includes("Error") || /^Error:/i.test(String(reasoning || "").trim())
@@ -369,6 +373,7 @@ export function normalizeRowsFromCsv(data: Record<string, string>[]): RatingRow[
       categoryTags,
       discoveryTags,
       structuralTags,
+      learningAskType,
       tagReasons: EMPTY_REASONS,
       discoveryTagReasons: EMPTY_REASONS,
       tags,

@@ -9,7 +9,6 @@ import { DateRangeBar } from "./DateRangeBar";
 import { LowRatedDailyChart } from "./LowRatedDailyChart";
 import { AvgTurnsDailyChart } from "./AvgTurnsDailyChart";
 import { LowRatedTrendChart } from "./LowRatedTrendChart";
-import { WeeklyTagSpotlightChart } from "./WeeklyTagSpotlightChart";
 import { CappedSessionTable } from "./CappedSessionTable";
 import type { ReleaseMarker } from "../releaseMarkers";
 
@@ -377,14 +376,6 @@ export const OverviewTab = memo(function OverviewTab({
 
       {workingBatches.length >= 1 ? (
         <AvgTurnsDailyChart batches={workingBatches} compact={workingBatches.length === 1} />
-      ) : null}
-
-      {workingBatches.length >= 1 ? (
-        <WeeklyTagSpotlightChart
-          batches={workingBatches}
-          compact={workingBatches.length === 1}
-          lowScoreOnly={tagFilter.lowScoreOnly}
-        />
       ) : null}
 
       <div className="charts-grid">

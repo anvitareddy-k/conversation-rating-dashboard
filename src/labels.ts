@@ -5,6 +5,7 @@ export const LABELS = {
   tags: "Tags",
   categories: "Categories",
   discoveryTags: "Discovery tags",
+  askType: "Categories",
   tagsDesc: "Issue / failure tags on sessions",
   categoriesDesc: "Conversation category labels",
   discoveryTagsDesc: "Subject and topic labels from discovery_tags",
