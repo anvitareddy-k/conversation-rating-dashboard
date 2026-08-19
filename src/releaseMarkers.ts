@@ -27,6 +27,16 @@ export const BUILTIN_RELEASE_DEFINITIONS: BuiltinReleaseDefinition[] = [
     label: "Slotfill Fix",
     firstPostReleaseDay: "2026-06-10",
   },
+  {
+    id: "jul-23-test-prep-disabled",
+    label: "Test Prep Disabled",
+    firstPostReleaseDay: "2026-07-23",
+  },
+  {
+    id: "aug-15-model-changes",
+    label: "Model Changes",
+    firstPostReleaseDay: "2026-08-15",
+  },
 ];
 
 const MANUAL_STORAGE_KEY = "conversation-rating-release-markers";

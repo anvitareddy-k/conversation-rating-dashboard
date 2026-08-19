@@ -573,7 +573,6 @@ export default function App() {
                   workingBatches={workingBatches}
                   rangeBatchCount={rangeBatches.length}
                   stats={stats}
-                  analyticsPool={analyticsPool}
                   funnelRows={funnelRows}
                   tagFilter={tagFilter}
                   rangeStartStr={rangeStartStr}

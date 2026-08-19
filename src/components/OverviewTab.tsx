@@ -11,7 +11,6 @@ import { AvgTurnsDailyChart } from "./AvgTurnsDailyChart";
 import { LowRatedTrendChart } from "./LowRatedTrendChart";
 import { WeeklyTagSpotlightChart } from "./WeeklyTagSpotlightChart";
 import { CappedSessionTable } from "./CappedSessionTable";
-import { ProminentIssuesPanel } from "./ProminentIssuesPanel";
 import type { ReleaseMarker } from "../releaseMarkers";
 
 function TagChip({
@@ -145,7 +144,6 @@ type OverviewTabProps = {
   workingBatches: LoadedBatch[];
   rangeBatchCount: number;
   stats: OverviewStats;
-  analyticsPool: RatingRow[];
   funnelRows: RatingRow[];
   tagFilter: TagFilterState;
   rangeStartStr: string;
@@ -168,7 +166,6 @@ export const OverviewTab = memo(function OverviewTab({
   workingBatches,
   rangeBatchCount,
   stats,
-  analyticsPool,
   funnelRows,
   tagFilter,
   rangeStartStr,
@@ -389,15 +386,6 @@ export const OverviewTab = memo(function OverviewTab({
           lowScoreOnly={tagFilter.lowScoreOnly}
         />
       ) : null}
-
-      <ProminentIssuesPanel
-        issueStats={stats.qaTagStats}
-        sessions={analyticsPool}
-        rangeLabel={
-          rangeStartStr && rangeEndStr ? `${rangeStartStr} → ${rangeEndStr}` : "selected days"
-        }
-        poolLabel={stats.poolLabel}
-      />
 
       <div className="charts-grid">
         <div className="chart-card full-width">
