@@ -92,3 +92,44 @@ export function getTagDescriptionOrDefault(tag: string, kind: TagKind): string {
         : "QA issue tag from the rating prompt.")
   );
 }
+
+/** Product-side actions an agent/reviewer can recommend for a QA issue tag. */
+export const QA_TAG_REMEDIATIONS: Record<string, string> = {
+  "Incorrect Answer":
+    "Audit knowledge/prompt grounding for the failing topics; add gold answers or retrieval for those chapters; re-rate a sample after the prompt/model change.",
+  "Context Handling Failure":
+    "Tighten session-memory / carry-forward of class, chapter, and prior constraints; add explicit recap of user facts before answering.",
+  "Correction Ignored":
+    "Detect user corrections and force a revise path (acknowledge + recompute); do not continue the previous wrong plan.",
+  "Class Mismatch":
+    "Hard-gate class/grade from user text and slotfill; refuse or confirm before generating the wrong grade.",
+  "Level/Board Mismatch":
+    "Parse board/exam level (CBSE vs others, JEE vs school) and keep generation in that scope; add a confirm turn when ambiguous.",
+  "Chapter Mismatch":
+    "Bind chapter/lesson names early; if the user names a chapter, constrain retrieval and slotfill to that chapter only.",
+  "Insufficient Input Data":
+    "Ask one targeted clarifying question instead of guessing; skip long slotfill until class/subject/chapter are known.",
+  "Image Reading Error":
+    "Improve vision OCR/layout for worksheets; if unreadable, say so and ask for a clearer photo rather than inventing content.",
+  "Unwanted Template Push":
+    "Only fire TEST_PREP/slotfill when the user asked for practice/mock/PYQ; default to Direct Response otherwise.",
+  "Completion Refusal":
+    "Allow complete worked solutions when the user already asked to learn-by-doing or wants the answer; reserve Socratic mode for explicit tutoring.",
+  "Gone Exception":
+    "Investigate empty-generation / timeout path (no image); retry, fallback model, or a visible error instead of blank.",
+  "Image Gone Exception":
+    "Same as Gone Exception on image turns — check vision pipeline timeouts and empty completions.",
+  "Slow Generation":
+    "Cap length, stream tokens, and skip heavy slotfill on simple questions; track p95 latency for the failing intents.",
+  "Excessive Clarification":
+    "If class/subject/chapter are already known, answer; max one clarifying question per turn.",
+  "Feature Request Gap":
+    "Do not treat as a wrong answer — log as a product gap; reply with what is supported and capture the request.",
+};
+
+export function getTagRemediation(tag: string): string {
+  return (
+    QA_TAG_REMEDIATIONS[tag.trim()] ??
+    "Sample sessions in TARS, confirm the failure mode, then change prompt, retrieval, or the matching product path and re-rate."
+  );
+}

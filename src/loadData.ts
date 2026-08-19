@@ -1,4 +1,10 @@
 import Papa from "papaparse";
+import type { CompactManifest } from "./compactFormat";
+import {
+  batchesFromAggregates,
+  loadCompactAggregates,
+  loadCompactManifest,
+} from "./compactLoad";
 import type { LoadedBatch, RatingRow } from "./parsing";
 import {
   createBatch,
@@ -18,6 +24,7 @@ export type LoadedData = {
   merged: RatingRow[];
   htmlSources: { name: string; text: string }[];
   skippedFiles?: string[];
+  compactManifest?: CompactManifest;
 };
 
 export function parseFileContent(fileName: string, text: string): ParsedFile {
@@ -53,7 +60,7 @@ export function buildLoadedData(parsed: ParsedFile[]): LoadedData {
 }
 
 async function fetchText(url: string): Promise<string> {
-  const res = await fetch(url, { cache: "no-store" });
+  const res = await fetch(url, { cache: "force-cache" });
   if (!res.ok) throw new Error(`Failed to fetch ${url} (${res.status})`);
   return res.text();
 }
@@ -87,7 +94,6 @@ export async function loadManifest(): Promise<string[]> {
   }
 }
 
-/** Optional `?data=file.csv,https://...` query param for ad-hoc loads. */
 export function getUrlDataParam(): string[] {
   const raw = new URLSearchParams(window.location.search).get("data");
   if (!raw) return [];
@@ -100,23 +106,39 @@ export function getUrlDataParam(): string[] {
 export async function loadDataSources(
   paths: string[]
 ): Promise<{ parsed: ParsedFile[]; skipped: string[] }> {
-  const parsed: ParsedFile[] = [];
   const skipped: string[] = [];
-  for (const path of paths) {
-    try {
-      const url = resolveDataUrl(path);
-      const text = await fetchText(url);
-      parsed.push(parseFileContent(fileNameFromPath(path), text));
-    } catch (err) {
-      console.warn(`Skipping data file: ${path}`, err);
-      skipped.push(path);
-    }
-  }
-  return { parsed, skipped };
+  const parsed = await Promise.all(
+    paths.map(async (path) => {
+      try {
+        const url = resolveDataUrl(path);
+        const text = await fetchText(url);
+        return parseFileContent(fileNameFromPath(path), text);
+      } catch (err) {
+        console.warn(`Skipping data file: ${path}`, err);
+        skipped.push(path);
+        return null;
+      }
+    })
+  );
+  return { parsed: parsed.filter((p): p is ParsedFile => p != null), skipped };
 }
 
 export async function loadBundledData(): Promise<LoadedData | null> {
-  const paths = [...(await loadManifest()), ...getUrlDataParam()];
+  const urlExtras = getUrlDataParam();
+  if (!urlExtras.length) {
+    const compact = await loadCompactManifest();
+    if (compact?.days?.length) {
+      const agg = await loadCompactAggregates(compact.version);
+      return {
+        batches: batchesFromAggregates(agg),
+        merged: [],
+        htmlSources: [],
+        compactManifest: compact,
+      };
+    }
+  }
+
+  const paths = [...(await loadManifest()), ...urlExtras];
   if (!paths.length) return null;
   const { parsed, skipped } = await loadDataSources(paths);
   if (!parsed.length) return null;

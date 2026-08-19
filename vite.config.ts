@@ -1,12 +1,18 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
-import { existsSync, readFileSync, readdirSync, watch, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  watch,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
+import { packData } from "./scripts/pack-data.mjs";
 
-// Must match your GitHub repo name (Pages URL: https://<user>.github.io/<repo-name>/)
 const repoName = "conversation-rating-dashboard";
 
-/** @returns true when manifest.json was updated */
 function writeDataManifest(dataDir: string): boolean {
   const manifestPath = join(dataDir, "manifest.json");
   if (!existsSync(dataDir)) {
@@ -25,36 +31,41 @@ function writeDataManifest(dataDir: string): boolean {
   return true;
 }
 
-/** Regenerate manifest.json when CSV/HTML files are added or removed (not on manifest writes). */
-function dataManifestPlugin(): Plugin {
+function compactDataPlugin(): Plugin {
   return {
-    name: "data-manifest",
+    name: "compact-data",
     buildStart() {
+      packData(process.cwd());
       writeDataManifest(join(process.cwd(), "public", "data"));
     },
     configureServer(server) {
       const dataDir = join(process.cwd(), "public", "data");
+      packData(process.cwd());
       writeDataManifest(dataDir);
-
       let timer: ReturnType<typeof setTimeout> | undefined;
       watch(dataDir, (_event, filename) => {
-        if (!filename || filename === "manifest.json" || !/\.(csv|html)$/i.test(filename)) {
-          return;
-        }
+        if (!filename || filename === "manifest.json" || !/\.csv$/i.test(filename)) return;
         clearTimeout(timer);
         timer = setTimeout(() => {
-          if (writeDataManifest(dataDir)) {
-            server.ws.send({ type: "full-reload" });
-          }
-        }, 300);
+          packData(process.cwd());
+          writeDataManifest(dataDir);
+          server.ws.send({ type: "full-reload" });
+        }, 800);
       });
+    },
+    closeBundle() {
+      const dataOut = join(process.cwd(), "dist", "data");
+      if (!existsSync(dataOut)) return;
+      for (const name of readdirSync(dataOut)) {
+        if (/\.(csv|html)$/i.test(name)) rmSync(join(dataOut, name));
+      }
     },
   };
 }
 
 export default defineConfig({
   base: `/${repoName}/`,
-  plugins: [react(), dataManifestPlugin()],
+  plugins: [react(), compactDataPlugin()],
   server: {
     port: 5173,
     open: true,

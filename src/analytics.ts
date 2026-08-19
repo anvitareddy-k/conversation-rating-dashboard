@@ -1,6 +1,7 @@
 import type { LoadedBatch, PickableTagKind, RatingRow, TagKind, TagStatRow, FunnelOrder } from "./parsing";
 import { computeTagStats, filterRowsByTags, isLowRated, pickTagsByKind, type TagFilterState } from "./parsing";
 import { kindLabel } from "./labels";
+import type { DaySlice } from "./compactFormat";
 
 export type TimelinePoint = {
   batchId: string;
@@ -59,12 +60,36 @@ const EMPTY_BUCKETS = (): Record<ScoreBucketId, number> => ({
   unknown: 0,
 });
 
+function activeSlice(batch: LoadedBatch): DaySlice | null {
+  return batch.slices?.all ?? null;
+}
+
+function tagMapForSlice(
+  slice: DaySlice,
+  kind: TagKind,
+  lowScoreOnly: boolean
+): Record<string, number> {
+  if (kind === "qa") return lowScoreOnly ? slice.qaLow : slice.qa;
+  if (kind === "category") return lowScoreOnly ? slice.catLow : slice.cat;
+  if (kind === "discovery") return slice.disc;
+  return {};
+}
+
 /** Per-day stacked score counts (6+ at base, 1–5 stacked above, ≤5 on top). */
 export function computeDailyScoreStacks(batches: LoadedBatch[]): DailyScoreStackPoint[] {
   const sorted = [...batches].sort(
     (a, b) => (a.periodDate?.getTime() ?? 0) - (b.periodDate?.getTime() ?? 0)
   );
   return sorted.map((batch) => {
+    const slice = activeSlice(batch);
+    if (slice) {
+      return {
+        batchId: batch.id,
+        label: batch.label,
+        totalCount: slice.total,
+        buckets: slice.buckets,
+      };
+    }
     const buckets = EMPTY_BUCKETS();
     for (const row of batch.rows) {
       buckets[scoreBucket(row.overall_score)]++;
@@ -90,6 +115,8 @@ export function lowScoreBand(score: number): LowScoreBandId | null {
 export function computeLowScoreBandBreakdown(
   batch: LoadedBatch
 ): Record<LowScoreBandId, number> {
+  const slice = activeSlice(batch);
+  if (slice) return { ...slice.bands };
   const counts: Record<LowScoreBandId, number> = {
     "1-2": 0,
     "2-3": 0,
@@ -109,6 +136,16 @@ export function computeDailyLowRatedSeries(batches: LoadedBatch[]): DailyLowRate
     (a, b) => (a.periodDate?.getTime() ?? 0) - (b.periodDate?.getTime() ?? 0)
   );
   return sorted.map((batch) => {
+    const slice = activeSlice(batch);
+    if (slice) {
+      return {
+        batchId: batch.id,
+        label: batch.label,
+        lowRatedCount: slice.lowRated,
+        totalCount: slice.total,
+        lowRatedPct: slice.total ? (100 * slice.lowRated) / slice.total : 0,
+      };
+    }
     const totalCount = batch.rows.length;
     const lowRatedCount = batch.rows.filter(isLowRated).length;
     return {
@@ -135,6 +172,16 @@ export function computeDailyAvgTurnsSeries(batches: LoadedBatch[]): DailyAvgTurn
     (a, b) => (a.periodDate?.getTime() ?? 0) - (b.periodDate?.getTime() ?? 0)
   );
   return sorted.map((batch) => {
+    const slice = activeSlice(batch);
+    if (slice) {
+      return {
+        batchId: batch.id,
+        label: batch.label,
+        avgTurns: slice.withTurns ? slice.turnSum / slice.withTurns : null,
+        sessionCount: slice.total,
+        withTurnsCount: slice.withTurns,
+      };
+    }
     const turns = batch.rows
       .map((r) => r.num_turns)
       .filter((n): n is number => n != null && Number.isFinite(n) && n > 0);
@@ -150,6 +197,244 @@ export function computeDailyAvgTurnsSeries(batches: LoadedBatch[]): DailyAvgTurn
       withTurnsCount,
     };
   });
+}
+
+/** Fixed tags tracked in the week-by-week spotlight chart. */
+export type SpotlightTagDef = {
+  id: string;
+  tag: string;
+  kind: PickableTagKind;
+  shortLabel: string;
+};
+
+export const SPOTLIGHT_TAGS: SpotlightTagDef[] = [
+  {
+    id: "previous-year",
+    tag: "Previous Year Questions",
+    kind: "category",
+    shortLabel: "Previous year questions",
+  },
+  {
+    id: "mock-practice",
+    tag: "Mock / Practice Questions",
+    kind: "category",
+    shortLabel: "Practice / mock questions",
+  },
+  {
+    id: "image-reading",
+    tag: "Image Reading Error",
+    kind: "qa",
+    shortLabel: "Image reading error",
+  },
+  {
+    id: "incorrect-answer",
+    tag: "Incorrect Answer",
+    kind: "qa",
+    shortLabel: "Incorrect answer",
+  },
+  {
+    id: "unwanted-template",
+    tag: "Unwanted Template Push",
+    kind: "qa",
+    shortLabel: "Unwanted template push",
+  },
+  {
+    id: "context-failure",
+    tag: "Context Handling Failure",
+    kind: "qa",
+    shortLabel: "Context handling failure",
+  },
+  {
+    id: "correction-ignored",
+    tag: "Correction Ignored",
+    kind: "qa",
+    shortLabel: "Correction ignored",
+  },
+  {
+    id: "gone-exception",
+    tag: "Gone Exception",
+    kind: "qa",
+    shortLabel: "Gone exception",
+  },
+  {
+    id: "image-gone",
+    tag: "Image Gone Exception",
+    kind: "qa",
+    shortLabel: "Image gone exception",
+  },
+  {
+    id: "completion-refusal",
+    tag: "Completion Refusal",
+    kind: "qa",
+    shortLabel: "Completion refusal",
+  },
+  {
+    id: "slow-generation",
+    tag: "Slow Generation",
+    kind: "qa",
+    shortLabel: "Slow generation",
+  },
+  {
+    id: "insufficient-input",
+    tag: "Insufficient Input Data",
+    kind: "qa",
+    shortLabel: "Insufficient input",
+  },
+  {
+    id: "slotfill",
+    tag: "Slotfill",
+    kind: "category",
+    shortLabel: "Slotfill",
+  },
+  {
+    id: "image-upload",
+    tag: "Image Upload",
+    kind: "category",
+    shortLabel: "Image upload",
+  },
+  {
+    id: "speech-to-text",
+    tag: "Speech to Text",
+    kind: "category",
+    shortLabel: "Speech to text",
+  },
+  {
+    id: "direct-response",
+    tag: "Direct Response",
+    kind: "category",
+    shortLabel: "Direct response",
+  },
+  {
+    id: "blurry-image",
+    tag: "Blurry / Unclear Image",
+    kind: "category",
+    shortLabel: "Blurry / unclear image",
+  },
+  {
+    id: "outside-school",
+    tag: "Outside School Level Questions",
+    kind: "category",
+    shortLabel: "Outside school level",
+  },
+];
+
+export type WeeklyTagPoint = {
+  weekKey: string;
+  label: string;
+  weekStart: Date;
+  weekEnd: Date;
+  count: number;
+  poolSize: number;
+  pct: number;
+  dayCount: number;
+};
+
+function startOfIsoWeek(date: Date): Date {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const day = d.getDay(); // 0 Sun … 6 Sat
+  const diff = day === 0 ? -6 : 1 - day; // Monday start
+  d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function weekKey(date: Date): string {
+  const s = startOfIsoWeek(date);
+  const y = s.getFullYear();
+  const m = String(s.getMonth() + 1).padStart(2, "0");
+  const day = String(s.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function formatWeekLabel(weekStart: Date, weekEnd: Date): string {
+  const sameYear = weekStart.getFullYear() === weekEnd.getFullYear();
+  const startFmt = weekStart.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
+  const endFmt = weekEnd.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  return `${startFmt} – ${endFmt}`;
+}
+
+/**
+ * Week-by-week % of sessions with a given tag (Mon–Sun weeks by batch periodDate).
+ * Batches without a periodDate are skipped.
+ */
+export function computeWeeklyTagSeries(
+  batches: LoadedBatch[],
+  tag: string,
+  kind: PickableTagKind,
+  lowScoreOnly = false
+): WeeklyTagPoint[] {
+  type Bucket = {
+    weekStart: Date;
+    weekEnd: Date;
+    count: number;
+    poolSize: number;
+    dayKeys: Set<string>;
+    rows: RatingRow[];
+    usedSlice: boolean;
+  };
+  const byWeek = new Map<string, Bucket>();
+
+  for (const batch of batches) {
+    if (!batch.periodDate) continue;
+    const start = startOfIsoWeek(batch.periodDate);
+    const key = weekKey(batch.periodDate);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    let bucket = byWeek.get(key);
+    if (!bucket) {
+      bucket = {
+        weekStart: start,
+        weekEnd: end,
+        count: 0,
+        poolSize: 0,
+        dayKeys: new Set(),
+        rows: [],
+        usedSlice: false,
+      };
+      byWeek.set(key, bucket);
+    }
+    const dayKey = `${batch.periodDate.getFullYear()}-${batch.periodDate.getMonth()}-${batch.periodDate.getDate()}`;
+    bucket.dayKeys.add(dayKey);
+    const slice = activeSlice(batch);
+    if (slice) {
+      bucket.usedSlice = true;
+      const map = tagMapForSlice(slice, kind, lowScoreOnly);
+      bucket.count += map[tag] || 0;
+      bucket.poolSize += lowScoreOnly ? slice.lowRated : slice.total;
+    } else {
+      const rows = lowScoreOnly ? batch.rows.filter(isLowRated) : batch.rows;
+      bucket.rows.push(...rows);
+    }
+  }
+
+  return [...byWeek.entries()]
+    .sort((a, b) => a[1].weekStart.getTime() - b[1].weekStart.getTime())
+    .map(([key, bucket]) => {
+      const extraCount = bucket.usedSlice
+        ? 0
+        : bucket.rows.filter((r) => rowHasTag(r, tag, kind)).length;
+      const extraPool = bucket.usedSlice ? 0 : bucket.rows.length;
+      const count = bucket.count + extraCount;
+      const poolSize = bucket.poolSize + extraPool;
+      return {
+        weekKey: key,
+        label: formatWeekLabel(bucket.weekStart, bucket.weekEnd),
+        weekStart: bucket.weekStart,
+        weekEnd: bucket.weekEnd,
+        count,
+        poolSize,
+        pct: poolSize ? (100 * count) / poolSize : 0,
+        dayCount: bucket.dayKeys.size,
+      };
+    });
 }
 
 export type FunnelStep = {
@@ -251,6 +536,19 @@ export function computeTagTimeline(
   );
 
   return sorted.map((batch) => {
+    const slice = activeSlice(batch);
+    if (slice) {
+      const poolSize = lowScoreOnly ? slice.lowRated : slice.total;
+      const count = tagMapForSlice(slice, kind, lowScoreOnly)[tag] || 0;
+      return {
+        batchId: batch.id,
+        label: batch.label,
+        count,
+        poolSize,
+        pct: poolSize ? (100 * count) / poolSize : 0,
+        avgScore: null,
+      };
+    }
     const pool = poolFromBatch(batch, lowScoreOnly);
     const matching = pool.filter((r) => rowHasTag(r, tag, kind));
     const scores = matching.map((r) => r.overall_score).filter(Number.isFinite);
@@ -425,7 +723,10 @@ export function computeBatchSummary(batches: LoadedBatch[]): {
   periodRange: string;
   batchCount: number;
 } {
-  const totalSessions = batches.reduce((s, b) => s + b.rows.length, 0);
+  const totalSessions = batches.reduce((s, b) => {
+    const slice = activeSlice(b);
+    return s + (slice ? slice.total : b.rows.length);
+  }, 0);
   const dates = batches
     .map((b) => b.periodDate)
     .filter(Boolean) as Date[];
@@ -442,8 +743,29 @@ export function computeBatchSummary(batches: LoadedBatch[]): {
 export function topTagsAcrossBatches(
   batches: LoadedBatch[],
   pickTags: (r: RatingRow) => string[],
-  lowScoreOnly: boolean
+  lowScoreOnly: boolean,
+  kind: TagKind = "qa"
 ): TagStatRow[] {
+  const allSliced = batches.length > 0 && batches.every((b) => activeSlice(b));
+  if (allSliced) {
+    const merged: Record<string, number> = {};
+    let pool = 0;
+    for (const batch of batches) {
+      const slice = activeSlice(batch)!;
+      pool += lowScoreOnly ? slice.lowRated : slice.total;
+      const map = tagMapForSlice(slice, kind, lowScoreOnly);
+      for (const [tag, n] of Object.entries(map)) merged[tag] = (merged[tag] || 0) + n;
+    }
+    const denom = pool || 1;
+    return Object.entries(merged)
+      .map(([tag, count]) => ({
+        tag,
+        count,
+        pctOfPool: (100 * count) / denom,
+        pctOfTotal: (100 * count) / denom,
+      }))
+      .sort((a, b) => b.count - a.count);
+  }
   const combined = batches.flatMap((b) => poolFromBatch(b, lowScoreOnly));
   return computeTagStats(combined, pickTags, combined.length);
 }

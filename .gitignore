@@ -2,3 +2,6 @@ node_modules/
 dist/
 *.tsbuildinfo
 .DS_Store
+public/compact/days/
+public/compact/aggregates.json
+public/compact/manifest.json

@@ -1,3 +1,4 @@
+import { EMPTY_REASONS, type DaySlice } from "./compactFormat";
 import { isCategoryVocabularyTag } from "./tagDefinitions";
 
 export type TagKind = "qa" | "category" | "discovery" | "structural";
@@ -24,7 +25,6 @@ export type RatingRow = {
   structuralTags: string[];
   tagReasons: Record<string, string>;
   discoveryTagReasons: Record<string, string>;
-  reasoning?: string;
   /** All display tags combined (structural + qa + category + discovery) */
   tags: string[];
   /** Source file batch id (for timeline) */
@@ -37,6 +37,8 @@ export type LoadedBatch = {
   label: string;
   rows: RatingRow[];
   periodDate: Date | null;
+  /** Precomputed daily stats from compact pack (charts skip row scans). */
+  slices?: { all: DaySlice; noError: DaySlice };
 };
 
 export type TagStatRow = {
@@ -187,9 +189,15 @@ export function filterBatchesByRange(
   end: Date | null
 ): LoadedBatch[] {
   if (start === null && end === null) return batches;
-  return batches
-    .map((b) => ({ ...b, rows: filterRows(b.rows, start, end) }))
-    .filter((b) => b.rows.length > 0);
+  return batches.filter((b) => {
+    if (b.periodDate) {
+      const t = b.periodDate.getTime();
+      if (start && t < start.getTime()) return false;
+      if (end && t > end.getTime()) return false;
+      return true;
+    }
+    return filterRows(b.rows, start, end).length > 0;
+  });
 }
 
 export function sessionTimeRangeFromRows(rows: RatingRow[]): {
@@ -340,6 +348,14 @@ export function normalizeRowsFromCsv(data: Record<string, string>[]): RatingRow[
       discoveryTagsRaw
     );
     const turnsRaw = csvColumn(r, "message_count", "turns", "num_turns", "num turns");
+    const reasoning = csvColumn(r, "reasoning");
+    const qaWithError =
+      qaTags.includes("Error") || /^Error:/i.test(String(reasoning || "").trim())
+        ? qaTags.includes("Error")
+          ? qaTags
+          : [...qaTags, "Error"]
+        : qaTags;
+    const tags = [...structuralTags, ...qaWithError, ...categoryTags, ...discoveryTags];
     rows.push({
       chatbot_sid: csvColumn(r, "chatbot_sid", "chatbot sid"),
       time: csvColumn(r, "time"),
@@ -349,14 +365,13 @@ export function normalizeRowsFromCsv(data: Record<string, string>[]): RatingRow[
       axis1: Number.isFinite(axis1) ? axis1 : NaN,
       axis2: Number.isFinite(axis2) ? axis2 : NaN,
       axis3: Number.isFinite(axis3) ? axis3 : NaN,
-      qaTags,
+      qaTags: qaWithError,
       categoryTags,
       discoveryTags,
       structuralTags,
-      tagReasons: {},
-      discoveryTagReasons: {},
-      reasoning: csvColumn(r, "reasoning"),
-      tags: [...structuralTags, ...qaTags, ...categoryTags, ...discoveryTags],
+      tagReasons: EMPTY_REASONS,
+      discoveryTagReasons: EMPTY_REASONS,
+      tags,
     });
   }
   return rows;
@@ -487,6 +502,12 @@ export function normalizeRowsFromHtml(htmlText: string): RatingRow[] {
         .replace(/^(AI Reasoning|Session summary):\s*/i, "")
         .trim();
     }
+    const qaWithError =
+      disjoint.qaTags.includes("Error") || /^Error:/i.test(reasoning)
+        ? disjoint.qaTags.includes("Error")
+          ? disjoint.qaTags
+          : [...disjoint.qaTags, "Error"]
+        : disjoint.qaTags;
 
     rows.push({
       chatbot_sid: sid,
@@ -497,19 +518,13 @@ export function normalizeRowsFromHtml(htmlText: string): RatingRow[] {
       axis1,
       axis2,
       axis3,
-      qaTags: disjoint.qaTags,
+      qaTags: qaWithError,
       categoryTags: disjoint.categoryTags,
       discoveryTags: disjoint.discoveryTags,
       structuralTags,
       tagReasons,
       discoveryTagReasons,
-      reasoning,
-      tags: [
-        ...structuralTags,
-        ...disjoint.qaTags,
-        ...disjoint.categoryTags,
-        ...disjoint.discoveryTags,
-      ],
+      tags: [...structuralTags, ...qaWithError, ...disjoint.categoryTags, ...disjoint.discoveryTags],
     });
   });
 
@@ -535,11 +550,9 @@ export function isLowRated(r: RatingRow): boolean {
   return Number.isFinite(r.overall_score) && r.overall_score <= 5;
 }
 
-/** Session where LLM rating failed (issue tag Error or reasoning "Error: …"). */
+/** Session where LLM rating failed (issue tag Error). */
 export function isErrorSession(row: RatingRow): boolean {
-  if (row.qaTags.includes("Error")) return true;
-  if (row.tags.includes("Error")) return true;
-  return /^Error:/i.test(String(row.reasoning || "").trim());
+  return row.qaTags.includes("Error") || row.tags.includes("Error");
 }
 
 export function excludeErrorSessions(rows: RatingRow[]): RatingRow[] {
@@ -723,8 +736,10 @@ export function inferPeriodFromFile(
 }
 
 export function createBatch(fileName: string, rows: RatingRow[]): LoadedBatch {
-  const id = `${fileName}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const { label, periodDate } = inferPeriodFromFile(fileName, rows);
+  const id = periodDate
+    ? `${periodDate.getFullYear()}-${String(periodDate.getMonth() + 1).padStart(2, "0")}-${String(periodDate.getDate()).padStart(2, "0")}`
+    : `${fileName}-${Math.random().toString(36).slice(2, 8)}`;
   const tagged = rows.map((r) => ({ ...r, batchId: id }));
   return { id, fileName, label, rows: tagged, periodDate };
 }

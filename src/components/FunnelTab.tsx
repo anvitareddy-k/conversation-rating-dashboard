@@ -163,7 +163,7 @@ function FunnelTagChip({
 
 function FunnelSessionsPanel({ rows }: { rows: RatingRow[] }) {
   const [copied, setCopied] = useState(false);
-  const [showAll, setShowAll] = useState(false);
+  const [shown, setShown] = useState(50);
 
   const sids = useMemo(
     () =>
@@ -173,7 +173,7 @@ function FunnelSessionsPanel({ rows }: { rows: RatingRow[] }) {
     [rows]
   );
 
-  const displayRows = showAll ? rows : rows.slice(0, 50);
+  const displayRows = rows.slice(0, shown);
 
   const copySids = async () => {
     if (!sids.length) return;
@@ -203,9 +203,13 @@ function FunnelSessionsPanel({ rows }: { rows: RatingRow[] }) {
               {copied ? "Copied!" : "Copy SIDs"}
             </button>
           ) : null}
-          {rows.length > 50 ? (
-            <button type="button" onClick={() => setShowAll((v) => !v)}>
-              {showAll ? "Show first 50" : `Show all ${rows.length}`}
+          {rows.length > shown ? (
+            <button type="button" onClick={() => setShown((n) => n + 50)}>
+              Show more ({shown.toLocaleString()} of {rows.length.toLocaleString()})
+            </button>
+          ) : shown > 50 ? (
+            <button type="button" onClick={() => setShown(50)}>
+              Show first 50
             </button>
           ) : null}
         </div>

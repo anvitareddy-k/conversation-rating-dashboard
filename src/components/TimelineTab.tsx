@@ -135,7 +135,7 @@ export function TimelineTab({
   }, []);
 
   const tagStats = useMemo(
-    () => topTagsAcrossBatches(batches, (r) => pickTagsByKind(r, tagKind), lowScoreOnly),
+    () => topTagsAcrossBatches(batches, (r) => pickTagsByKind(r, tagKind), lowScoreOnly, tagKind),
     [batches, tagKind, lowScoreOnly]
   );
 
@@ -146,7 +146,7 @@ export function TimelineTab({
   }, [tagStats, tagSearch]);
 
   const compareTagStats = useMemo(
-    () => topTagsAcrossBatches(batches, (r) => pickTagsByKind(r, compareKind), lowScoreOnly),
+    () => topTagsAcrossBatches(batches, (r) => pickTagsByKind(r, compareKind), lowScoreOnly, compareKind),
     [batches, compareKind, lowScoreOnly]
   );
 

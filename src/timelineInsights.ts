@@ -179,12 +179,14 @@ function significantShiftsFromBatches(
   const qaStats = topTagsAcrossBatches(
     [...beforeBatches, ...afterBatches],
     (r) => r.qaTags,
-    lowScoreOnly
+    lowScoreOnly,
+    "qa"
   );
   const discStats = topTagsAcrossBatches(
     [...beforeBatches, ...afterBatches],
     (r) => r.categoryTags,
-    lowScoreOnly
+    lowScoreOnly,
+    "category"
   );
 
   const shifts: TimelineTagShift[] = [];
